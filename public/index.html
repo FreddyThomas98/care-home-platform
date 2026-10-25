@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Care Home Rota Management Platform</title>
+  <link rel="stylesheet" href="css/style.css?v=5">
+  <!-- SheetJS & ExcelJS for Excel download with executive styling -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+</head>
+<body>
+
+  <!-- LOGIN SECTION (Shown first if not authenticated) -->
+  <div id="loginSection" class="login-wrap" style="display:none;">
+    <div class="login-card">
+      <div class="login-brand">
+        <h1>Care Home <span>Rota</span></h1>
+        <p>Enterprise Staff & Shift Scheduling Platform</p>
+      </div>
+
+      <div id="loginAlert" style="display:none; padding:10px 14px; background:#fee2e2; color:#dc2626; border-radius:6px; font-size:13px; font-weight:600; margin-bottom:16px;"></div>
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label>Email Address</label>
+          <input type="email" id="loginEmail" class="form-control" placeholder="name@carehome.com" required value="admin@carehome.com">
+        </div>
+
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required value="admin123">
+        </div>
+
+        <button type="submit" id="loginBtn" class="btn btn-primary" style="width:100%; justify-content:center; padding:11px; font-size:15px; margin-top:8px;">
+          Sign In to Platform
+        </button>
+      </form>
+
+      <div style="margin-top:20px; font-size:12px; color:#64748b; line-height:1.6; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid #e2e8f0;">
+        <strong>Default Credentials:</strong><br>
+        • Admin: <code>admin@carehome.com</code> / <code>admin123</code><br>
+        • Manager: <code>manager@carehome.com</code> / <code>manager123</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUTHENTICATED APP SECTION -->
+  <div id="appSection" style="display:none;">
+    <!-- NAVBAR -->
+    <header class="navbar">
+      <div class="nav-brand">
+        🏥 Care Home <span>Rota Platform</span>
+      </div>
+
+      <div class="nav-user">
+        <div class="user-badge">
+          <span id="navUserName">User</span>
+          <span id="navUserRole" class="role-pill">Manager</span>
+        </div>
+        <button class="btn btn-secondary" onclick="handleLogout()" style="padding:6px 12px; font-size:13px;">
+          Log Out
+        </button>
+      </div>
+    </header>
+
+    <!-- NAVIGATION TABS -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" onclick="switchView('rota')">📅 Rota Generator</button>
+      <button class="nav-tab" onclick="switchView('employees')">👥 Staff Management</button>
+      <button class="nav-tab" onclick="switchView('requirements')">📊 Staff Requirements</button>
+      <button class="nav-tab" onclick="switchView('hierarchy')">🔀 Role Hierarchy</button>
+      <button class="nav-tab" onclick="switchView('leave')">🏖️ Approved Leave</button>
+      <button class="nav-tab" onclick="switchView('preferences')">⭐ Staff Preferences & Patterns</button>
+      <button class="nav-tab" onclick="switchView('training')">🎓 Training</button>
+      <button class="nav-tab" id="adminUsersTab" style="display:none;" onclick="switchView('users')">🔒 Admin / Users</button>
+    </nav>
+
+    <!-- MAIN VIEW CONTAINER -->
+    <main class="container">
+      <div id="viewContainer">
+        <!-- Views dynamically injected here -->
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL CONTAINER -->
+  <div id="modalContainer"></div>
+
+  <!-- DEDICATED PRINT CONTAINER (1 Week per Sheet Landscape) -->
+  <div id="printContainer" class="print-container"></div>
+
+  <script src="js/app.js?v=7"></script>
+</body>
+</html>

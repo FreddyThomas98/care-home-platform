@@ -1,0 +1,13 @@
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SQLite temporary WAL and SHM files
+data/*.db-wal
+data/*.db-shm
+
+# OS generated files
+.DS_Store
+Thumbs.db
+.env
