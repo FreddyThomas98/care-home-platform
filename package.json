@@ -4,8 +4,8 @@
   "description": "Full-stack Care Home Rota Management Platform",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "seed": "node seed.js"
+    "start": "node --experimental-sqlite server.js",
+    "seed": "node --experimental-sqlite seed.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -14,6 +14,6 @@
     "jsonwebtoken": "^9.0.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   }
 }

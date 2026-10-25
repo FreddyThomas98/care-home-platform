@@ -1,12 +1,12 @@
 let Database;
 try {
-  Database = require("better-sqlite3");
+  const { DatabaseSync } = require("node:sqlite");
+  Database = DatabaseSync;
 } catch (e1) {
   try {
-    const { DatabaseSync } = require("node:sqlite");
-    Database = DatabaseSync;
+    Database = require("better-sqlite3");
   } catch (e2) {
-    throw new Error("SQLite engine not found. Please install better-sqlite3 or use Node.js 22+ with --experimental-sqlite.");
+    throw new Error("SQLite engine not found. Ensure Node 22+ with --experimental-sqlite or better-sqlite3 is installed.");
   }
 }
 
