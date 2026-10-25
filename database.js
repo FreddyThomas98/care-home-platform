@@ -1,4 +1,15 @@
-const { DatabaseSync } = require("node:sqlite");
+let Database;
+try {
+  Database = require("better-sqlite3");
+} catch (e1) {
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    Database = DatabaseSync;
+  } catch (e2) {
+    throw new Error("SQLite engine not found. Please install better-sqlite3 or use Node.js 22+ with --experimental-sqlite.");
+  }
+}
+
 const path = require("path");
 const fs = require("fs");
 
@@ -8,7 +19,7 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, "carehome.db");
-const db = new DatabaseSync(dbPath);
+const db = new Database(dbPath);
 
 // Enable WAL mode and foreign keys for optimal performance
 db.exec("PRAGMA journal_mode = WAL;");
