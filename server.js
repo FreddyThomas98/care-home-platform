@@ -269,19 +269,67 @@ app.get("/api/hierarchy", authenticateToken, async (req, res) => {
 });
 
 app.post("/api/hierarchy", authenticateToken, async (req, res) => {
-  const { priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4 } = req.body;
+  const { priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4, days_per_week } = req.body;
+  if (!required_role || !required_role.trim()) {
+    return res.status(400).json({ error: "Required role name cannot be empty" });
+  }
+  const roleName = required_role.trim();
+  const days = parseInt(days_per_week, 10) || 7;
   try {
     await db.execute(`
-      INSERT INTO role_hierarchy (priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO role_hierarchy (priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4, days_per_week)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       parseInt(priority, 10) || 99,
-      required_role.trim(),
+      roleName,
       substitute_1 ? substitute_1.trim() : "",
       substitute_2 ? substitute_2.trim() : "",
       substitute_3 ? substitute_3.trim() : "",
-      substitute_4 ? substitute_4.trim() : ""
+      substitute_4 ? substitute_4.trim() : "",
+      days
     ]);
+
+    // Dynamic Role Sync: Automatically register in requirements if not present
+    const existingReq = await db.queryOne("SELECT id FROM requirements WHERE LOWER(role_name) = LOWER(?)", [roleName]);
+    if (!existingReq) {
+      await db.execute("INSERT INTO requirements (role_name, day_required, night_required) VALUES (?, 0, 0)", [roleName]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/hierarchy/:id", authenticateToken, async (req, res) => {
+  const { priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4, days_per_week } = req.body;
+  if (!required_role || !required_role.trim()) {
+    return res.status(400).json({ error: "Required role name cannot be empty" });
+  }
+  const roleName = required_role.trim();
+  const days = parseInt(days_per_week, 10) || 7;
+  try {
+    await db.execute(`
+      UPDATE role_hierarchy
+      SET priority = ?, required_role = ?, substitute_1 = ?, substitute_2 = ?, substitute_3 = ?, substitute_4 = ?, days_per_week = ?
+      WHERE id = ?
+    `, [
+      parseInt(priority, 10) || 99,
+      roleName,
+      substitute_1 ? substitute_1.trim() : "",
+      substitute_2 ? substitute_2.trim() : "",
+      substitute_3 ? substitute_3.trim() : "",
+      substitute_4 ? substitute_4.trim() : "",
+      days,
+      req.params.id
+    ]);
+
+    // Dynamic Role Sync: Automatically register in requirements if not present
+    const existingReq = await db.queryOne("SELECT id FROM requirements WHERE LOWER(role_name) = LOWER(?)", [roleName]);
+    if (!existingReq) {
+      await db.execute("INSERT INTO requirements (role_name, day_required, night_required) VALUES (?, 0, 0)", [roleName]);
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -393,6 +441,36 @@ app.post("/api/preferences", authenticateToken, async (req, res) => {
           ]);
         }
         return res.json({ success: true, count: dates.length });
+      }
+    }
+
+    // Support batch multi-day preferences for recurring days
+    if (type === "day" && (Array.isArray(req.body.target_days) || (typeof target_day === "string" && target_day.includes(",")))) {
+      const rawDays = Array.isArray(req.body.target_days) ? req.body.target_days : target_day.split(",");
+      const days = [...new Set(rawDays.map(d => String(d).trim()).filter(Boolean))];
+
+      if (days.length > 0) {
+        for (const day of days) {
+          await db.execute(`
+            INSERT INTO preferences (
+              employee_id, type, target_date, target_day,
+              pattern_work_days, pattern_off_days, pattern_start_date,
+              preference, remarks
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            employee_id,
+            "day",
+            null,
+            day,
+            null,
+            null,
+            null,
+            preference || "prefer",
+            remarks || ""
+          ]);
+        }
+        return res.json({ success: true, count: days.length });
       }
     }
 

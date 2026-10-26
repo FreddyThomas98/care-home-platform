@@ -2235,8 +2235,23 @@ async function renderEmployeesView() {
   }
 }
 
-function openEmployeeModal(emp = null) {
+async function openEmployeeModal(emp = null) {
   const isEdit = !!emp;
+  let roles = ['Carer', 'Senior Carer', 'Staff Nurse', 'Team Leader', 'Advanced Team Leader', 'Clinical Lead', 'Dy. Manager', 'Wellbeing Staff', 'Hostes', 'Maintance Staff', 'Physiotherapist'];
+  try {
+    const [hList, rList] = await Promise.all([
+      apiFetch("/api/hierarchy").catch(() => []),
+      apiFetch("/api/requirements").catch(() => [])
+    ]);
+    const roleSet = new Set(roles);
+    (hList || []).forEach(h => { if (h.required_role) roleSet.add(h.required_role.trim()); });
+    (rList || []).forEach(r => { if (r.role_name) roleSet.add(r.role_name.trim()); });
+    if (emp && emp.designation) roleSet.add(emp.designation.trim());
+    roles = Array.from(roleSet).sort((a, b) => a.localeCompare(b));
+  } catch (e) {
+    // fallback to default list
+  }
+
   const content = `
     <div class="modal-overlay" onclick="closeModal(event)">
       <div class="modal-card" onclick="event.stopPropagation()">
@@ -2254,8 +2269,8 @@ function openEmployeeModal(emp = null) {
             <div class="form-group">
               <label>Role / Designation</label>
               <select id="empDesig" class="form-control" required>
-                ${['Carer', 'Senior Carer', 'Staff Nurse', 'Team Leader', 'Advanced Team Leader', 'Clinical Lead', 'Dy. Manager', 'Wellbeing Staff', 'Hostes', 'Maintance Staff', 'Physiotherapist'].map(r => `
-                  <option value="${r}" ${emp && emp.designation === r ? 'selected' : ''}>${r}</option>
+                ${roles.map(r => `
+                  <option value="${esc(r)}" ${emp && emp.designation === r ? 'selected' : ''}>${esc(r)}</option>
                 `).join('')}
               </select>
             </div>
@@ -2510,13 +2525,14 @@ async function renderHierarchyView() {
           <table>
             <thead>
               <tr>
-                <th style="width:80px; text-align:center;">Priority</th>
+                <th style="width:70px; text-align:center;">Priority</th>
                 <th>Required Role</th>
+                <th style="width:105px; text-align:center;">Days / Wk</th>
                 <th style="background:#e6f6ec; color:#15803d;">Substitute 1</th>
                 <th>Substitute 2</th>
                 <th>Substitute 3</th>
                 <th>Substitute 4</th>
-                <th style="text-align:right;">Actions</th>
+                <th style="text-align:right; width:150px;">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -2524,11 +2540,19 @@ async function renderHierarchyView() {
                 <tr>
                   <td style="text-align:center; font-weight:800; font-size:14px; color:#0b3542;">${h.priority}</td>
                   <td><strong>${esc(h.required_role)}</strong></td>
+                  <td style="text-align:center;">
+                    <span class="badge" style="background:#e0f2fe; color:#0369a1; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:700;">
+                      ${h.days_per_week !== undefined && h.days_per_week !== null ? h.days_per_week : 7} d/wk
+                    </span>
+                  </td>
                   <td style="font-weight:600; color:#15803d;">${esc(h.substitute_1 || '—')}</td>
                   <td>${esc(h.substitute_2 || '—')}</td>
                   <td>${esc(h.substitute_3 || '—')}</td>
                   <td>${esc(h.substitute_4 || '—')}</td>
-                  <td style="text-align:right;">
+                  <td style="text-align:right; white-space:nowrap;">
+                    <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px; margin-right:6px;" onclick='openHierarchyModal(${JSON.stringify(h).replace(/'/g, "&apos;")})'>
+                      ✏️ Edit
+                    </button>
                     <button class="btn btn-danger" style="padding:4px 10px; font-size:12px;" onclick="deleteHierarchy(${h.id})">
                       Delete
                     </button>
@@ -2545,43 +2569,52 @@ async function renderHierarchyView() {
   }
 }
 
-function openHierarchyModal() {
+function openHierarchyModal(h = null) {
+  const isEdit = !!h;
   const content = `
     <div class="modal-overlay" onclick="closeModal(event)">
       <div class="modal-card" onclick="event.stopPropagation()">
         <div class="modal-header">
-          <h3>Add Role Substitution Rule</h3>
+          <h3>${isEdit ? 'Edit Role Hierarchy Rule' : 'Add Role Hierarchy Rule'}</h3>
           <button class="btn btn-secondary" onclick="closeModal()">✕</button>
         </div>
-        <form onsubmit="saveHierarchy(event)">
+        <form onsubmit="saveHierarchy(event, ${h ? h.id : 'null'})">
           <div class="modal-body">
-            <div style="display:grid; grid-template-columns:120px 1fr; gap:16px;">
+            <div style="display:grid; grid-template-columns:100px 1fr 130px; gap:16px;">
               <div class="form-group">
                 <label>Priority</label>
-                <input type="number" id="hierPri" class="form-control" required value="1">
+                <input type="number" id="hierPri" class="form-control" required value="${h ? h.priority : 1}" min="1">
               </div>
               <div class="form-group">
                 <label>Required Role</label>
-                <input type="text" id="hierReq" class="form-control" required placeholder="e.g. Staff Nurse">
+                <input type="text" id="hierReq" class="form-control" required placeholder="e.g. Staff Nurse" value="${h ? esc(h.required_role) : ''}">
+              </div>
+              <div class="form-group">
+                <label>Days / Wk Required</label>
+                <input type="number" id="hierDays" class="form-control" required min="1" max="7" value="${h && h.days_per_week !== undefined && h.days_per_week !== null ? h.days_per_week : 7}">
               </div>
             </div>
 
             <div class="form-group">
-              <label>Substitute 1 (First Backup)</label>
-              <input type="text" id="hierSub1" class="form-control" placeholder="e.g. Team Leader">
+              <label>Substitute 1 (Primary Backup)</label>
+              <input type="text" id="hierSub1" class="form-control" placeholder="e.g. Team Leader" value="${h ? esc(h.substitute_1 || '') : ''}">
             </div>
             <div class="form-group">
               <label>Substitute 2</label>
-              <input type="text" id="hierSub2" class="form-control" placeholder="e.g. Senior Carer">
+              <input type="text" id="hierSub2" class="form-control" placeholder="e.g. Senior Carer" value="${h ? esc(h.substitute_2 || '') : ''}">
             </div>
             <div class="form-group">
               <label>Substitute 3</label>
-              <input type="text" id="hierSub3" class="form-control">
+              <input type="text" id="hierSub3" class="form-control" placeholder="e.g. Carer" value="${h ? esc(h.substitute_3 || '') : ''}">
+            </div>
+            <div class="form-group">
+              <label>Substitute 4</label>
+              <input type="text" id="hierSub4" class="form-control" placeholder="e.g. Clinical Lead" value="${h ? esc(h.substitute_4 || '') : ''}">
             </div>
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary">Save Rule</button>
+            <button type="submit" class="btn btn-primary">${isEdit ? 'Save Changes' : 'Save Rule'}</button>
           </div>
         </form>
       </div>
@@ -2590,19 +2623,28 @@ function openHierarchyModal() {
   document.getElementById("modalContainer").innerHTML = content;
 }
 
-async function saveHierarchy(e) {
+async function saveHierarchy(e, id = null) {
   e.preventDefault();
-  const priority = document.getElementById("hierPri").value;
-  const required_role = document.getElementById("hierReq").value;
-  const substitute_1 = document.getElementById("hierSub1").value;
-  const substitute_2 = document.getElementById("hierSub2").value;
-  const substitute_3 = document.getElementById("hierSub3").value;
+  const priority = parseInt(document.getElementById("hierPri").value, 10) || 99;
+  const required_role = document.getElementById("hierReq").value.trim();
+  const days_per_week = parseInt(document.getElementById("hierDays").value, 10) || 7;
+  const substitute_1 = document.getElementById("hierSub1").value.trim();
+  const substitute_2 = document.getElementById("hierSub2").value.trim();
+  const substitute_3 = document.getElementById("hierSub3").value.trim();
+  const substitute_4 = document.getElementById("hierSub4").value.trim();
 
   try {
-    await apiFetch("/api/hierarchy", {
-      method: "POST",
-      body: JSON.stringify({ priority, required_role, substitute_1, substitute_2, substitute_3 })
-    });
+    if (id) {
+      await apiFetch(`/api/hierarchy/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ priority, required_role, days_per_week, substitute_1, substitute_2, substitute_3, substitute_4 })
+      });
+    } else {
+      await apiFetch("/api/hierarchy", {
+        method: "POST",
+        body: JSON.stringify({ priority, required_role, days_per_week, substitute_1, substitute_2, substitute_3, substitute_4 })
+      });
+    }
     closeModal();
     renderHierarchyView();
   } catch (err) {
@@ -2962,7 +3004,7 @@ async function openPreferenceModal() {
 
             <!-- PATTERN INPUTS -->
             <div id="patternSection" style="display:none; background:#f8fafc; padding:14px; border-radius:6px; margin-bottom:16px; border:1px solid #e2e8f0;">
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px;">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:8px;">
                 <div>
                   <label style="font-size:12px; font-weight:700;">Working Days in Block</label>
                   <input type="number" id="patternWork" class="form-control" value="4" min="1" max="14">
@@ -2972,9 +3014,8 @@ async function openPreferenceModal() {
                   <input type="number" id="patternOff" class="form-control" value="2" min="1" max="14">
                 </div>
               </div>
-              <div>
-                <label style="font-size:12px; font-weight:700;">Pattern Anchor / Start Date</label>
-                <input type="date" id="patternStart" class="form-control" value="2026-09-28">
+              <div style="font-size:12px; color:#475569; margin-top:6px; line-height:1.4;">
+                ℹ️ Repeating pattern automatically aligns with the active rota period start date.
               </div>
             </div>
 
@@ -3017,18 +3058,20 @@ async function openPreferenceModal() {
               </div>
             </div>
 
-            <!-- RECURRING DAY INPUT -->
+            <!-- RECURRING DAY(S) MULTI-DAY INPUT -->
             <div id="daySection" style="display:none;" class="form-group">
-              <label>Recurring Day of Week</label>
-              <select id="prefDay" class="form-control">
-                <option value="Monday">Monday</option>
-                <option value="Tuesday">Tuesday</option>
-                <option value="Wednesday">Wednesday</option>
-                <option value="Thursday">Thursday</option>
-                <option value="Friday">Friday</option>
-                <option value="Saturday">Saturday</option>
-                <option value="Sunday">Sunday</option>
-              </select>
+              <label style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span>Recurring Day(s) of Week</span>
+                <span id="selectedDaysSummary" style="font-size:12px; color:#0e4b5d; font-weight:700;">1 selected</span>
+              </label>
+              <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day, idx) => `
+                  <label style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; background:#f1f5f9; padding:6px 12px; border-radius:20px; border:1px solid #cbd5e1; font-size:13px; font-weight:600; user-select:none;">
+                    <input type="checkbox" name="prefDays" value="${day}" ${idx === 0 ? 'checked' : ''} onchange="updateSelectedDaysSummary()" style="accent-color:#0e4b5d;">
+                    ${day}
+                  </label>
+                `).join('')}
+              </div>
             </div>
 
             <div class="form-group">
@@ -3055,6 +3098,14 @@ async function openPreferenceModal() {
   document.getElementById("modalContainer").innerHTML = content;
 }
 
+function updateSelectedDaysSummary() {
+  const checked = Array.from(document.querySelectorAll("input[name='prefDays']:checked")).map(cb => cb.value);
+  const sumEl = document.getElementById("selectedDaysSummary");
+  if (sumEl) {
+    sumEl.textContent = `${checked.length} selected`;
+  }
+}
+
 function togglePrefInputs() {
   const type = document.getElementById("prefType").value;
   document.getElementById("patternSection").style.display = type === "pattern" ? "block" : "none";
@@ -3066,10 +3117,8 @@ async function savePreference(e) {
   e.preventDefault();
   const employee_id = document.getElementById("prefEmpId").value;
   const type = document.getElementById("prefType").value;
-  const target_day = document.getElementById("prefDay").value;
-  const pattern_work_days = document.getElementById("patternWork").value;
-  const pattern_off_days = document.getElementById("patternOff").value;
-  const pattern_start_date = document.getElementById("patternStart").value;
+  const pattern_work_days = document.getElementById("patternWork") ? document.getElementById("patternWork").value : null;
+  const pattern_off_days = document.getElementById("patternOff") ? document.getElementById("patternOff").value : null;
   const preference = document.getElementById("prefIntent").value;
   const remarks = document.getElementById("prefRemarks").value;
 
@@ -3086,6 +3135,17 @@ async function savePreference(e) {
     }
   }
 
+  let selectedDays = [];
+  let target_day = null;
+  if (type === "day") {
+    selectedDays = Array.from(document.querySelectorAll("input[name='prefDays']:checked")).map(cb => cb.value);
+    if (selectedDays.length === 0) {
+      alert("Please select at least one weekday for this preference.");
+      return;
+    }
+    target_day = selectedDays.join(", ");
+  }
+
   try {
     await apiFetch("/api/preferences", {
       method: "POST",
@@ -3094,10 +3154,11 @@ async function savePreference(e) {
         type,
         target_dates: type === "date" ? target_dates : null,
         target_date: type === "date" ? target_dates[0] : null,
+        target_days: type === "day" ? selectedDays : null,
         target_day: type === "day" ? target_day : null,
         pattern_work_days: type === "pattern" ? pattern_work_days : null,
         pattern_off_days: type === "pattern" ? pattern_off_days : null,
-        pattern_start_date: type === "pattern" ? pattern_start_date : null,
+        pattern_start_date: null,
         preference,
         remarks
       })

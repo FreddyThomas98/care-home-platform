@@ -61,12 +61,25 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     dailyRequiredNightTotal += (r.night_required || 0);
   });
 
-  // Build hierarchy mapping
+  // Build hierarchy mapping and role days per week
   const roleHierarchyMap = {};
+  const roleDaysPerWeek = {};
   hierarchyList.forEach(h => {
     const subs = [h.required_role, h.substitute_1, h.substitute_2, h.substitute_3, h.substitute_4].filter(Boolean);
     roleHierarchyMap[h.required_role] = subs;
+    roleDaysPerWeek[h.required_role] = parseInt(h.days_per_week, 10) || 7;
   });
+
+  // Helper: Get required quota for role on a given day (respects days_per_week)
+  function getRequiredQuota(role, shiftType, dayInfo) {
+    const base = requirements[role] ? (shiftType === "D" ? requirements[role].day : requirements[role].night) : 0;
+    if (base <= 0) return 0;
+    const maxDays = roleDaysPerWeek[role] !== undefined ? roleDaysPerWeek[role] : 7;
+    // Monday = 0, Tuesday = 1, ..., Sunday = 6
+    const dIdxInWeek = (dayInfo.dayOfWeek + 6) % 7;
+    if (dIdxInWeek >= maxDays) return 0;
+    return base;
+  }
 
   // Build 28-day calendar days (Monday to Sunday, 4 weeks)
   const calendarDays = [];
@@ -180,16 +193,86 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
-  // 3. Pre-mark Approved Leave
-  calendarDays.forEach(day => {
-    const dStr = day.dateString;
-    employees.forEach(emp => {
-      const state = empState[emp.id];
-      const hasLeave = leaveList.some(l => {
-        return l.employee_id === emp.id && dStr >= l.start_date && dStr <= l.end_date;
+  // Helper: Evaluate Pattern
+  function isPatternWorkDay(state, targetDateStr) {
+    if (!state.pattern || !state.pattern.pattern_work_days || !state.pattern.pattern_off_days) {
+      return null; // No pattern
+    }
+    const anchorStr = state.pattern.pattern_start_date || startDateStr;
+    const anchor = new Date(anchorStr + "T00:00:00Z");
+    const target = new Date(targetDateStr + "T00:00:00Z");
+    const diffDays = Math.round((target - anchor) / (1000 * 60 * 60 * 24));
+    const cycle = state.pattern.pattern_work_days + state.pattern.pattern_off_days;
+    const phase = ((diffDays % cycle) + cycle) % cycle;
+    return phase < state.pattern.pattern_work_days;
+  }
+
+  // 3. Pre-mark Approved Leave (Proportional allocation per week)
+  employees.forEach(emp => {
+    const state = empState[emp.id];
+    const empLeaves = leaveList.filter(l => l.employee_id === emp.id);
+    if (empLeaves.length === 0) return;
+
+    weeks.forEach((weekDays, weekIdx) => {
+      // Find days in this week that fall in approved leave
+      const leaveDaysInWeek = weekDays.filter(day => {
+        return empLeaves.some(l => day.dateString >= l.start_date && day.dateString <= l.end_date);
       });
-      if (hasLeave) {
-        state.assignedShifts[dStr] = { shift: "OFF", status: "L", coveringRole: "" };
+
+      if (leaveDaysInWeek.length === 0) return;
+
+      if (leaveDaysInWeek.length === 1) {
+        // Single day leave: exactly on that day
+        state.assignedShifts[leaveDaysInWeek[0].dateString] = {
+          shift: "OFF",
+          status: "L",
+          coveringRole: "",
+          isLeave: true
+        };
+      } else {
+        // Multi-day / long leave: record leave up to weekly contracted shifts
+        const targetShifts = state.weeklyTargets[weekIdx] || Math.round(state.contractHours / state.shiftHours) || 4;
+
+        if (leaveDaysInWeek.length <= targetShifts) {
+          leaveDaysInWeek.forEach(day => {
+            state.assignedShifts[day.dateString] = {
+              shift: "OFF",
+              status: "L",
+              coveringRole: "",
+              isLeave: true
+            };
+          });
+        } else {
+          // Sort candidate leave days: prioritize pattern work days or standard work days
+          const sorted = [...leaveDaysInWeek].sort((a, b) => {
+            const patA = isPatternWorkDay(state, a.dateString) === true ? 1 : 0;
+            const patB = isPatternWorkDay(state, b.dateString) === true ? 1 : 0;
+            if (patB !== patA) return patB - patA;
+            // Prefer weekdays over weekends unless weekend working week
+            const isWkA = a.isWeekend ? 1 : 0;
+            const isWkB = b.isWeekend ? 1 : 0;
+            return isWkA - isWkB;
+          });
+
+          // Allotted up to targetShifts as "L", remainder as "OFF" (protected from work)
+          sorted.forEach((day, idx) => {
+            if (idx < targetShifts) {
+              state.assignedShifts[day.dateString] = {
+                shift: "OFF",
+                status: "L",
+                coveringRole: "",
+                isLeave: true
+              };
+            } else {
+              state.assignedShifts[day.dateString] = {
+                shift: "OFF",
+                status: "OFF",
+                coveringRole: "",
+                leaveProtected: true
+              };
+            }
+          });
+        }
       }
     });
   });
@@ -209,19 +292,28 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     }
   });
 
-  // Helper: Evaluate Pattern
-  function isPatternWorkDay(state, targetDateStr) {
-    if (!state.pattern || !state.pattern.pattern_work_days || !state.pattern.pattern_off_days) {
-      return null; // No pattern
+  // Night Staff Training Safety Rule:
+  // If an employee works Night shift (staffType === 'N') and has daytime training on date T,
+  // the previous night (T - 1) must be mandatory OFF (rest before morning training).
+  trainingList.forEach(t => {
+    const state = empState[t.employee_id];
+    if (state && state.staffType === "N" && t.training_date) {
+      const tIdx = calendarDays.findIndex(d => d.dateString === t.training_date);
+      if (tIdx > 0) {
+        const prevDayStr = calendarDays[tIdx - 1].dateString;
+        const curAsgn = state.assignedShifts[prevDayStr];
+        if (!curAsgn || curAsgn.status !== "L") {
+          state.assignedShifts[prevDayStr] = {
+            shift: "OFF",
+            status: "OFF",
+            coveringRole: "",
+            isNightTrainingRest: true,
+            note: "Mandatory rest before daytime training"
+          };
+        }
+      }
     }
-    const anchorStr = state.pattern.pattern_start_date || startDateStr;
-    const anchor = new Date(anchorStr + "T00:00:00Z");
-    const target = new Date(targetDateStr + "T00:00:00Z");
-    const diffDays = Math.round((target - anchor) / (1000 * 60 * 60 * 24));
-    const cycle = state.pattern.pattern_work_days + state.pattern.pattern_off_days;
-    const phase = ((diffDays % cycle) + cycle) % cycle;
-    return phase < state.pattern.pattern_work_days;
-  }
+  });
 
   // Helper: Check if employee has negative preference (unavailable/off)
   function isUnavailable(empId, dStr, dayName) {
@@ -333,6 +425,16 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         }
       }
 
+      // Night Staff Pre-Training Rest:
+      // If employee works Night shift, they cannot work the night before daytime training (T - 1)
+      if (shiftType === "N" && dayIdx < calendarDays.length - 1) {
+        const nextDay = calendarDays[dayIdx + 1];
+        const nextAsgn = state.assignedShifts[nextDay.dateString];
+        if (nextAsgn && nextAsgn.status === "TR") {
+          return false;
+        }
+      }
+
       return true;
     }
 
@@ -342,10 +444,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     // PASS 1: Pattern Workers & Date Preferences First (User Decision #2)
     sortedRoles.forEach(reqRole => {
       ["D", "N"].forEach(shiftType => {
-        const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
-        if (reqQuota <= 0) return;
-
         weekDays.forEach(dayInfo => {
+          const reqQuota = getRequiredQuota(reqRole, shiftType, dayInfo);
+          if (reqQuota <= 0) return;
+
           const dStr = dayInfo.dateString;
           if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
@@ -376,11 +478,11 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     if (weekendDays.length > 0) {
       sortedRoles.forEach(reqRole => {
         ["D", "N"].forEach(shiftType => {
-          const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
-          if (reqQuota <= 0) return;
-
           [satDay, sunDay].forEach(wDay => {
             if (!wDay) return;
+            const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
+            if (reqQuota <= 0) return;
+
             const dStr = wDay.dateString;
             if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
@@ -415,7 +517,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     if (friDay) {
       sortedRoles.forEach(reqRole => {
         ["D", "N"].forEach(shiftType => {
-          const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
+          const reqQuota = getRequiredQuota(reqRole, shiftType, friDay);
           if (reqQuota <= 0) return;
 
           const dStr = friDay.dateString;
@@ -449,10 +551,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     const weekdaysOnly = weekDays.filter(d => !d.isWeekend);
     sortedRoles.forEach(reqRole => {
       ["D", "N"].forEach(shiftType => {
-        const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
-        if (reqQuota <= 0) return;
-
         weekdaysOnly.forEach(wDay => {
+          const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
+          if (reqQuota <= 0) return;
+
           const dStr = wDay.dateString;
           if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
@@ -472,10 +574,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     // PASS 5: Role Hierarchy Substitutions (Strictly without exceeding contract hours)
     sortedRoles.forEach(reqRole => {
       ["D", "N"].forEach(shiftType => {
-        const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
-        if (reqQuota <= 0) return;
-
         weekDays.forEach(dayInfo => {
+          const reqQuota = getRequiredQuota(reqRole, shiftType, dayInfo);
+          if (reqQuota <= 0) return;
+
           const dStr = dayInfo.dateString;
           if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
@@ -508,10 +610,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     if (weekendDays.length > 0) {
       sortedRoles.forEach(reqRole => {
         ["D", "N"].forEach(shiftType => {
-          const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
-          if (reqQuota <= 0) return;
-
           weekendDays.forEach(wDay => {
+            const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
+            if (reqQuota <= 0) return;
+
             const dStr = wDay.dateString;
             if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
@@ -552,14 +654,22 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   // User Instruction: 1st preference is meet contract hours without overstaffing.
   // Weekend rule can be skipped if needed to fulfill rota fairly.
   Object.values(empState).forEach(st => {
-    if (st.totalShiftsWorked >= st.totalMonthlyTargetShifts) return;
+    // Count leave shifts already credited to this employee
+    let empLeaveCount = 0;
+    calendarDays.forEach(d => {
+      const a = st.assignedShifts[d.dateString];
+      if (a && a.status === "L") empLeaveCount++;
+    });
+    const netTargetShifts = Math.max(0, st.totalMonthlyTargetShifts - empLeaveCount);
+
+    if (st.totalShiftsWorked >= netTargetShifts) return;
 
     calendarDays.forEach((dayInfo, dayIdx) => {
-      if (st.totalShiftsWorked >= st.totalMonthlyTargetShifts) return;
+      if (st.totalShiftsWorked >= netTargetShifts) return;
       const dStr = dayInfo.dateString;
       const shiftType = st.staffType;
       const reqRole = st.designation;
-      const reqQuota = requirements[reqRole] ? (shiftType === "D" ? requirements[reqRole].day : requirements[reqRole].night) : 0;
+      const reqQuota = getRequiredQuota(reqRole, shiftType, dayInfo);
 
       // Check current filled on this day for this role
       const currentFilled = Object.values(empState).filter(s => {
@@ -571,7 +681,13 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       if (currentFilled >= reqQuota) return;
 
       // Can this staff take this shift?
-      if (st.assignedShifts[dStr] && st.assignedShifts[dStr].shift !== "OFF") return;
+      // Do NOT overwrite days that are on leave, leave-protected, or night training rest!
+      const existing = st.assignedShifts[dStr];
+      if (existing) {
+        if (existing.status === "L" || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
+          return;
+        }
+      }
       if (isUnavailable(st.id, dStr, dayInfo.dayName)) return;
 
       // Check consecutive days (max 4)
@@ -592,6 +708,13 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       if (dayInfo.dayName === "Monday" && shiftType === "D" && dayIdx > 0) {
         const prev = st.assignedShifts[calendarDays[dayIdx - 1].dateString];
         if (prev && prev.shift === "N") return;
+      }
+
+      // Night Staff Pre-Training Rest in Pass 7:
+      if (shiftType === "N" && dayIdx < calendarDays.length - 1) {
+        const nextDay = calendarDays[dayIdx + 1];
+        const nextAsgn = st.assignedShifts[nextDay.dateString];
+        if (nextAsgn && nextAsgn.status === "TR") return;
       }
 
       // Assign!
@@ -652,13 +775,21 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       return asgn && asgn.shift === "N";
     }).length;
 
-    const dayShort = Math.max(0, dailyRequiredDayTotal - dayAllotted);
-    const nightShort = Math.max(0, dailyRequiredNightTotal - nightAllotted);
+    // Calculate today's required totals dynamically based on days_per_week for each role
+    let todayRequiredDayTotal = 0;
+    let todayRequiredNightTotal = 0;
+    Object.keys(requirements).forEach(r => {
+      todayRequiredDayTotal += getRequiredQuota(r, "D", day);
+      todayRequiredNightTotal += getRequiredQuota(r, "N", day);
+    });
+
+    const dayShort = Math.max(0, todayRequiredDayTotal - dayAllotted);
+    const nightShort = Math.max(0, todayRequiredNightTotal - nightAllotted);
 
     // 1. Role-by-Role Diagnosis for Day Shift
     const dayBreakdown = [];
     Object.keys(requirements).forEach(role => {
-      const reqCount = requirements[role] ? requirements[role].day : 0;
+      const reqCount = getRequiredQuota(role, "D", day);
       if (reqCount <= 0) return;
 
       const allottedStaff = Object.values(empState).filter(st => {
@@ -679,7 +810,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           let reason = "";
           let conflictMeta = null;
 
-          if (asgn && asgn.status === "L") {
+          if (asgn && (asgn.status === "L" || asgn.leaveProtected)) {
             reason = "Approved Annual Leave";
             conflictMeta = {
               conflictingRules: "Approved Leave vs. Daily Staff Quota",
@@ -794,7 +925,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     // 2. Role-by-Role Diagnosis for Night Shift
     const nightBreakdown = [];
     Object.keys(requirements).forEach(role => {
-      const reqCount = requirements[role] ? requirements[role].night : 0;
+      const reqCount = getRequiredQuota(role, "N", day);
       if (reqCount <= 0) return;
 
       const allottedStaff = Object.values(empState).filter(st => {
@@ -815,7 +946,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           let reason = "";
           let conflictMeta = null;
 
-          if (asgn && asgn.status === "L") {
+          if (asgn && (asgn.status === "L" || asgn.leaveProtected)) {
             reason = "Approved Annual Leave";
             conflictMeta = {
               conflictingRules: "Approved Leave vs. Daily Night Quota",
@@ -823,6 +954,15 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               resolution: "Approved leave prioritized over night staffing quota",
               impact: "Leave preserved; night quota recorded as shortage",
               category: "Leave"
+            };
+          } else if (asgn && asgn.isNightTrainingRest) {
+            reason = "Mandatory Night Rest: Attending daytime training next morning";
+            conflictMeta = {
+              conflictingRules: "Mandatory Pre-Training Rest vs. Daily Night Quota",
+              winningRule: "Mandatory Pre-Training Rest",
+              resolution: "Night shift blocked prior to morning training session",
+              impact: "Night staff rested; night quota recorded as shortage",
+              category: "Training & Rest"
             };
           } else if (asgn && asgn.status === "TR") {
             reason = "Scheduled for Mandatory Training";
@@ -919,11 +1059,11 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         date: dStr,
         day: day.dayName,
         shiftType: "Day",
-        required: dailyRequiredDayTotal,
+        required: todayRequiredDayTotal,
         allotted: dayAllotted,
         shortage: dayShort,
         breakdown: dayBreakdown,
-        message: `Understaffing on ${day.dayName} ${dStr} (Day Shift): ${dayAllotted} / ${dailyRequiredDayTotal} staff allotted. Deficit: -${dayShort} staff.`,
+        message: `Understaffing on ${day.dayName} ${dStr} (Day Shift): ${dayAllotted} / ${todayRequiredDayTotal} staff allotted. Deficit: -${dayShort} staff.`,
         options: [
           "Call available bank or agency carers",
           "Offer voluntary overtime shift to off-duty staff",
@@ -937,11 +1077,11 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         date: dStr,
         day: day.dayName,
         shiftType: "Night",
-        required: dailyRequiredNightTotal,
+        required: todayRequiredNightTotal,
         allotted: nightAllotted,
         shortage: nightShort,
         breakdown: nightBreakdown,
-        message: `Understaffing on ${day.dayName} ${dStr} (Night Shift): ${nightAllotted} / ${dailyRequiredNightTotal} staff allotted. Deficit: -${nightShort} staff.`,
+        message: `Understaffing on ${day.dayName} ${dStr} (Night Shift): ${nightAllotted} / ${todayRequiredNightTotal} staff allotted. Deficit: -${nightShort} staff.`,
         options: [
           "Call available bank or agency night nurses/carers",
           "Request night shift swap with day staff with night clearance"
@@ -952,11 +1092,11 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     dailyShortages.push({
       date: dStr,
       dayName: day.dayName,
-      dayRequired: dailyRequiredDayTotal,
+      dayRequired: todayRequiredDayTotal,
       dayAllotted: dayAllotted,
       dayShortage: dayShort,
       dayBreakdown: dayBreakdown,
-      nightRequired: dailyRequiredNightTotal,
+      nightRequired: todayRequiredNightTotal,
       nightAllotted: nightAllotted,
       nightShortage: nightShort,
       nightBreakdown: nightBreakdown

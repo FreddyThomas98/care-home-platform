@@ -131,8 +131,12 @@ async function init() {
         substitute_1 VARCHAR(100),
         substitute_2 VARCHAR(100),
         substitute_3 VARCHAR(100),
-        substitute_4 VARCHAR(100)
+        substitute_4 VARCHAR(100),
+        days_per_week INTEGER NOT NULL DEFAULT 7
       );
+
+      ALTER TABLE role_hierarchy ADD COLUMN IF NOT EXISTS days_per_week INTEGER NOT NULL DEFAULT 7;
+      ALTER TABLE preferences ALTER COLUMN target_day TYPE VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS leave_records (
         id SERIAL PRIMARY KEY,
@@ -208,8 +212,8 @@ async function init() {
 
         for (const h of (seedData.role_hierarchy || [])) {
           await pgPool.query(
-            "INSERT INTO role_hierarchy (priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (required_role) DO NOTHING",
-            [h.priority, h.required_role, h.substitute_1 || '', h.substitute_2 || '', h.substitute_3 || '', h.substitute_4 || '']
+            "INSERT INTO role_hierarchy (priority, required_role, substitute_1, substitute_2, substitute_3, substitute_4, days_per_week) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (required_role) DO NOTHING",
+            [h.priority, h.required_role, h.substitute_1 || '', h.substitute_2 || '', h.substitute_3 || '', h.substitute_4 || '', h.days_per_week || 7]
           );
         }
 
@@ -227,6 +231,95 @@ async function init() {
     }
   } else {
     console.log("📁 Using local SQLite database.");
+    try {
+      sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'manager',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS employees (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          designation TEXT NOT NULL,
+          contract_hours REAL NOT NULL DEFAULT 44.0,
+          shift_hours REAL NOT NULL DEFAULT 11.0,
+          staff_type TEXT NOT NULL DEFAULT 'D',
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS requirements (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          role_name TEXT UNIQUE NOT NULL,
+          day_required INTEGER NOT NULL DEFAULT 0,
+          night_required INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS role_hierarchy (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          priority INTEGER NOT NULL,
+          required_role TEXT UNIQUE NOT NULL,
+          substitute_1 TEXT,
+          substitute_2 TEXT,
+          substitute_3 TEXT,
+          substitute_4 TEXT,
+          days_per_week INTEGER NOT NULL DEFAULT 7
+        );
+
+        CREATE TABLE IF NOT EXISTS leave_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          leave_type TEXT NOT NULL DEFAULT 'Annual Leave',
+          start_date TEXT NOT NULL,
+          end_date TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Approved',
+          notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          type TEXT NOT NULL DEFAULT 'date',
+          target_date TEXT,
+          target_day TEXT,
+          pattern_work_days INTEGER,
+          pattern_off_days INTEGER,
+          pattern_start_date TEXT,
+          preference TEXT NOT NULL DEFAULT 'prefer',
+          remarks TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS training_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          training_name TEXT NOT NULL DEFAULT 'Mandatory Training',
+          training_date TEXT,
+          notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS saved_rotas (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          period_id TEXT NOT NULL,
+          period_label TEXT NOT NULL,
+          start_date TEXT NOT NULL,
+          end_date TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          rota_json TEXT NOT NULL
+        );
+      `);
+
+      const cols = sqliteDb.prepare("PRAGMA table_info(role_hierarchy)").all();
+      if (!cols.some(c => c.name === "days_per_week")) {
+        sqliteDb.exec("ALTER TABLE role_hierarchy ADD COLUMN days_per_week INTEGER NOT NULL DEFAULT 7;");
+      }
+    } catch (e) {
+      console.warn("SQLite schema / migration check:", e.message);
+    }
   }
 }
 
