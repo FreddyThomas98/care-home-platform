@@ -12,17 +12,17 @@ const db = require("./database");
  * 7. Zero overstaffing + automated clash & understaffing detection with actionable solutions
  */
 
-function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
+async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   const warnings = [];
   const clashes = [];
 
-  // 1. Fetch live data from SQLite
-  const employees = db.prepare("SELECT * FROM employees WHERE active = 1").all();
-  const requirementsList = db.prepare("SELECT * FROM requirements").all();
-  const hierarchyList = db.prepare("SELECT * FROM role_hierarchy ORDER BY priority ASC").all();
-  const leaveList = db.prepare("SELECT * FROM leave_records WHERE status = 'Approved'").all();
-  const prefList = db.prepare("SELECT * FROM preferences").all();
-  const trainingList = db.prepare("SELECT * FROM training_records").all();
+  // 1. Fetch live data from database (PostgreSQL or SQLite)
+  const employees = await db.queryAll("SELECT * FROM employees WHERE active = 1");
+  const requirementsList = await db.queryAll("SELECT * FROM requirements");
+  const hierarchyList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+  const leaveList = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
+  const prefList = await db.queryAll("SELECT * FROM preferences");
+  const trainingList = await db.queryAll("SELECT * FROM training_records");
 
   // Canonical role sorting order
   const roleRankMap = {
