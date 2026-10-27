@@ -4,93 +4,350 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Care Home Rota Management Platform</title>
-  <link rel="stylesheet" href="css/style.css?v=5">
+  
+  <!-- Modern Google Font: Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css?v=11">
   <!-- SheetJS & ExcelJS for Excel download with executive styling -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
 
-  <!-- LOGIN SECTION (Shown first if not authenticated) -->
-  <div id="loginSection" class="login-wrap" style="display:none;">
-    <div class="login-card">
-      <div class="login-brand">
-        <h1>Care Home <span>Rota</span></h1>
+  <!-- =========================================================
+       LOGIN SECTION (Split Hero Layout Matching Reference Image 1)
+       ========================================================= -->
+  <div id="loginSection" class="login-split-container" style="display:none;">
+    <!-- LEFT HERO PANEL -->
+    <div class="login-hero-panel">
+      <!-- Fluid Wave Backdrop Decoration -->
+      <svg class="hero-wave-bg" viewBox="0 0 800 1000" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="heroTealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#043842" />
+            <stop offset="50%" stop-color="#065463" />
+            <stop offset="100%" stop-color="#03272e" />
+          </linearGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#heroTealGrad)"/>
+        <path d="M 0,200 Q 250,150 400,320 T 800,450 L 800,1000 L 0,1000 Z" fill="rgba(255,255,255,0.03)" />
+        <path d="M 0,400 Q 350,300 550,550 T 800,700 L 800,1000 L 0,1000 Z" fill="rgba(0,210,211,0.06)" />
+        <path d="M 0,650 Q 200,600 450,780 T 800,850 L 800,1000 L 0,1000 Z" fill="rgba(2,132,143,0.12)" />
+      </svg>
+
+      <div class="login-hero-content">
+        <!-- Brand Logo Header -->
+        <div class="hero-brand">
+          <div class="brand-icon-wrap">
+            <svg class="house-heart-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 10.5L12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <path d="M12 16.2s-3.5-2.2-3.5-4.3a2.2 2.2 0 0 1 3.5-1.6 2.2 2.2 0 0 1 3.5 1.6c0 2.1-3.5 4.3-3.5 4.3z" fill="#00d2d3" stroke="#00d2d3" stroke-width="1.2"/>
+            </svg>
+          </div>
+          <div>
+            <div class="hero-brand-title">Care Home <span class="accent-cyan">Rota</span></div>
+            <div class="hero-brand-subtitle">Enterprise Staff & Shift Scheduling Platform</div>
+          </div>
+        </div>
+
+        <div class="hero-cyan-bar"></div>
+
+        <!-- Big Pitch Headline -->
+        <h1 class="hero-headline">
+          Better Care<br>
+          Through Better<br>
+          <span class="accent-cyan">Planning</span>
+        </h1>
+
+        <p class="hero-description">
+          Simplify staff scheduling, ensure compliance, and deliver consistent care with an efficient rota management system.
+        </p>
+
+        <!-- Feature List with Circular Icons -->
+        <div class="hero-features-list">
+          <div class="hero-feature-item">
+            <div class="feature-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <div>
+              <div class="feature-item-title">Efficient</div>
+              <div class="feature-item-sub">Staff Scheduling</div>
+            </div>
+          </div>
+
+          <div class="hero-feature-item">
+            <div class="feature-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div>
+              <div class="feature-item-title">Compliance</div>
+              <div class="feature-item-sub">& Coverage</div>
+            </div>
+          </div>
+
+          <div class="hero-feature-item">
+            <div class="feature-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            </div>
+            <div>
+              <div class="feature-item-title">Improved</div>
+              <div class="feature-item-sub">Care Quality</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PHOTO PANEL -->
+    <div class="login-photo-panel">
+      <img src="images/nurse_resident_care.jpg" alt="Care Home Nurse & Resident" class="login-hero-img">
+      <div class="photo-overlay-gradient"></div>
+    </div>
+
+    <!-- FLOATING CENTER/OVERLAY LOGIN CARD (Matching Reference Image 1) -->
+    <div class="login-floating-card">
+      <div class="login-card-brand">
+        <div class="card-brand-icon-wrap">
+          <svg class="house-heart-svg-teal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10.5L12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <path d="M12 16.2s-3.5-2.2-3.5-4.3a2.2 2.2 0 0 1 3.5-1.6 2.2 2.2 0 0 1 3.5 1.6c0 2.1-3.5 4.3-3.5 4.3z" fill="#02848f" stroke="#02848f" stroke-width="1.2"/>
+          </svg>
+        </div>
+        <h2>Care Home <span class="card-brand-teal">Rota</span></h2>
         <p>Enterprise Staff & Shift Scheduling Platform</p>
       </div>
 
-      <div id="loginAlert" style="display:none; padding:10px 14px; background:#fee2e2; color:#dc2626; border-radius:6px; font-size:13px; font-weight:600; margin-bottom:16px;"></div>
+      <div id="loginAlert" style="display:none;" class="login-alert-banner"></div>
 
       <form id="loginForm" onsubmit="handleLogin(event)">
-        <div class="form-group">
-          <label>Email Address</label>
-          <input type="email" id="loginEmail" class="form-control" placeholder="name@carehome.com" required value="admin@carehome.com">
+        <div class="form-group-custom">
+          <label for="loginEmail">Email Address</label>
+          <div class="input-icon-wrap">
+            <span class="field-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </span>
+            <input type="email" id="loginEmail" class="form-input-styled" placeholder="Enter your email address" required value="admin@carehome.com">
+          </div>
         </div>
 
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required value="admin123">
+        <div class="form-group-custom">
+          <label for="loginPassword">Password</label>
+          <div class="input-icon-wrap">
+            <span class="field-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </span>
+            <input type="password" id="loginPassword" class="form-input-styled" placeholder="Enter your password" required value="admin123">
+            <button type="button" class="field-toggle-btn" onclick="togglePasswordVisibility('loginPassword', this)" title="Show/Hide Password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
         </div>
 
-        <button type="submit" id="loginBtn" class="btn btn-primary" style="width:100%; justify-content:center; padding:11px; font-size:15px; margin-top:8px;">
-          Sign In to Platform
+        <button type="submit" id="loginBtn" class="btn-login-submit">
+          <span>Sign In to Platform</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </button>
       </form>
 
-      <div style="margin-top:20px; font-size:12px; color:#64748b; line-height:1.6; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid #e2e8f0;">
-        <strong>Default Credentials:</strong><br>
-        • Admin: <code>admin@carehome.com</code> / <code>admin123</code><br>
-        • Manager: <code>manager@carehome.com</code> / <code>manager123</code>
+      <!-- Quick Credentials Pill for convenience -->
+      <div class="login-quick-creds">
+        <div class="quick-creds-title">Demo Credentials:</div>
+        <div class="creds-buttons-row">
+          <button type="button" class="btn-cred-chip" onclick="fillLoginCreds('admin@carehome.com', 'admin123')">
+            <strong>Admin:</strong> admin@carehome.com
+          </button>
+          <button type="button" class="btn-cred-chip" onclick="fillLoginCreds('manager@carehome.com', 'manager123')">
+            <strong>Manager:</strong> manager@carehome.com
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- AUTHENTICATED APP SECTION -->
-  <div id="appSection" style="display:none;">
-    <!-- NAVBAR -->
-    <header class="navbar">
-      <div class="nav-brand">
-        🏥 Care Home <span>Rota Platform</span>
-      </div>
 
-      <div class="nav-user">
-        <div class="user-badge">
-          <span id="navUserName">User</span>
-          <span id="navUserRole" class="role-pill">Manager</span>
+  <!-- =========================================================
+       AUTHENTICATED APPLICATION LAYOUT (Sidebar + Main View Matching Image 2)
+       ========================================================= -->
+  <div id="appSection" class="app-layout-container" style="display:none;">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="app-sidebar">
+      <!-- Sidebar Brand -->
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-icon">
+          <svg class="house-heart-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10.5L12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <path d="M12 16.2s-3.5-2.2-3.5-4.3a2.2 2.2 0 0 1 3.5-1.6 2.2 2.2 0 0 1 3.5 1.6c0 2.1-3.5 4.3-3.5 4.3z" fill="#00d2d3" stroke="#00d2d3" stroke-width="1.2"/>
+          </svg>
         </div>
-        <button class="btn btn-secondary" onclick="handleLogout()" style="padding:6px 12px; font-size:13px;">
-          Log Out
+        <div>
+          <div class="sidebar-brand-name">Care Home <span class="accent-cyan">Rota</span></div>
+          <div class="sidebar-brand-sub">Enterprise Staff & Shift Scheduling Platform</div>
+        </div>
+      </div>
+
+      <!-- Sidebar Navigation Menu Items -->
+      <nav class="sidebar-nav">
+        <button class="nav-tab sidebar-item active" onclick="switchView('rota')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </span>
+          <span class="sidebar-label">Rota Generator</span>
         </button>
-      </div>
-    </header>
 
-    <!-- NAVIGATION TABS -->
-    <nav class="nav-tabs">
-      <button class="nav-tab active" onclick="switchView('rota')">📅 Rota Generator</button>
-      <button class="nav-tab" onclick="switchView('shortage')">⚖️ Shortage Management</button>
-      <button class="nav-tab" onclick="switchView('employees')">👥 Staff</button>
-      <button class="nav-tab" onclick="switchView('requirements')">📊 Requirements</button>
-      <button class="nav-tab" onclick="switchView('hierarchy')">🔀 Hierarchy</button>
-      <button class="nav-tab" onclick="switchView('leave')">🏖️ Leave</button>
-      <button class="nav-tab" onclick="switchView('preferences')">⭐ Preferences</button>
-      <button class="nav-tab" onclick="switchView('training')">🎓 Training</button>
-      <button class="nav-tab" id="adminUsersTab" style="display:none;" onclick="switchView('users')">🔒 Admin</button>
-    </nav>
+        <button class="nav-tab sidebar-item" onclick="switchView('shortage')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <span class="sidebar-label">Shortage Management</span>
+        </button>
 
-    <!-- MAIN VIEW CONTAINER -->
-    <main class="container">
-      <div id="viewContainer">
-        <!-- Views dynamically injected here -->
+        <button class="nav-tab sidebar-item" onclick="switchView('employees')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </span>
+          <span class="sidebar-label">Staff</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" onclick="switchView('requirements')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </span>
+          <span class="sidebar-label">Requirements</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" onclick="switchView('hierarchy')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          </span>
+          <span class="sidebar-label">Hierarchy</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" onclick="switchView('leave')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>
+          </span>
+          <span class="sidebar-label">Leave</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" onclick="switchView('preferences')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </span>
+          <span class="sidebar-label">Preferences</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" onclick="switchView('training')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          </span>
+          <span class="sidebar-label">Training</span>
+        </button>
+
+        <button class="nav-tab sidebar-item" id="adminUsersTab" style="display:none;" onclick="switchView('users')">
+          <span class="sidebar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          <span class="sidebar-label">Admin</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Bottom Watermark Branding -->
+      <div class="sidebar-footer-branding">
+        <div class="footer-brand-wrap">
+          <svg class="house-heart-svg-outline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10.5L12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <path d="M12 16.2s-3.5-2.2-3.5-4.3a2.2 2.2 0 0 1 3.5-1.6 2.2 2.2 0 0 1 3.5 1.6c0 2.1-3.5 4.3-3.5 4.3z" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div class="footer-brand-title">Better Care<br>Through Better Planning</div>
+        <div class="footer-cyan-line"></div>
       </div>
-    </main>
+    </aside>
+
+    <!-- MAIN APPLICATION AREA (Top Header + View Container) -->
+    <div class="app-main-area">
+
+      <!-- TOP HEADER (Teal Wave Banner + Botanical Watermark + Profile Pill) -->
+      <header class="top-header">
+        <!-- Botanical Illustration Watermark SVG -->
+        <svg class="header-botanical-svg" viewBox="0 0 300 80" fill="none">
+          <path d="M10,80 C30,40 70,30 110,45 C150,60 170,25 210,35 C250,45 280,10 300,5" stroke="rgba(255,255,255,0.18)" stroke-width="2" stroke-dasharray="3,3" />
+          <path d="M40,55 Q50,40 65,48 Q55,60 40,55 Z" fill="rgba(255,255,255,0.14)" />
+          <path d="M85,38 Q95,20 110,30 Q100,45 85,38 Z" fill="rgba(255,255,255,0.14)" />
+          <path d="M140,50 Q155,35 168,45 Q158,60 140,50 Z" fill="rgba(255,255,255,0.14)" />
+          <path d="M190,30 Q205,15 220,25 Q210,40 190,30 Z" fill="rgba(255,255,255,0.14)" />
+          <path d="M245,22 Q260,8 272,18 Q262,32 245,22 Z" fill="rgba(255,255,255,0.14)" />
+        </svg>
+
+        <div class="header-left">
+          <!-- Mobile Sidebar Toggle -->
+          <button class="mobile-menu-btn" onclick="toggleSidebarMenu()" title="Toggle Menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+        </div>
+
+        <!-- Right Side: User Profile Pill & Log Out Button -->
+        <div class="header-right">
+          <div class="user-profile-pill">
+            <div id="navUserAvatar" class="avatar-circle">AD</div>
+            <div class="user-info-text">
+              <span id="navUserName" class="user-name">Admin Director</span>
+              <span id="navUserRole" class="user-role">Admin</span>
+            </div>
+            <svg class="dropdown-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+
+          <button class="btn-logout" onclick="handleLogout()" title="Log out of platform">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span>Log Out</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- MAIN SCROLLABLE CONTENT CANVAS -->
+      <main class="main-canvas">
+        <div id="viewContainer">
+          <!-- Dynamic Views Injected Here -->
+        </div>
+      </main>
+    </div>
   </div>
 
-  <!-- MODAL CONTAINER -->
+  <!-- MODAL CONTAINER (Safe Backdrop - Won't close unintentionally) -->
   <div id="modalContainer"></div>
 
   <!-- DEDICATED PRINT CONTAINER (1 Week per Sheet Landscape) -->
   <div id="printContainer" class="print-container"></div>
 
-  <script src="js/app.js?v=9"></script>
+  <!-- Client-side helper functions for login screen toggles -->
+  <script>
+    function togglePasswordVisibility(inputId, btn) {
+      const inp = document.getElementById(inputId);
+      if (!inp) return;
+      if (inp.type === "password") {
+        inp.type = "text";
+        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+      } else {
+        inp.type = "password";
+        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+      }
+    }
+
+    function fillLoginCreds(email, pwd) {
+      document.getElementById("loginEmail").value = email;
+      document.getElementById("loginPassword").value = pwd;
+    }
+
+    function toggleSidebarMenu() {
+      const sb = document.querySelector(".app-sidebar");
+      if (sb) sb.classList.toggle("mobile-open");
+    }
+  </script>
+
+  <script src="js/app.js?v=11"></script>
 </body>
 </html>
