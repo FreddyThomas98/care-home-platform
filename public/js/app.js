@@ -54,6 +54,57 @@ async function apiFetch(endpoint, options = {}) {
   return data;
 }
 
+// Staff Sorting & Floor Grouping Helpers
+function getStaffRolePriority(st, rolePriorityMap) {
+  const role = st.designation || "";
+  if (rolePriorityMap && rolePriorityMap[role] !== undefined) {
+    return rolePriorityMap[role];
+  }
+  const lower = role.toLowerCase();
+  if (lower.includes("manager")) return 1;
+  if (lower.includes("clinical lead") || lower.includes("advanced")) return 2;
+  if (lower.includes("team leader")) return 3;
+  if (lower.includes("nurse")) return 4;
+  if (lower.includes("senior carer")) return 5;
+  if (lower.includes("carer")) return 6;
+  if (lower.includes("physio")) return 7;
+  if (lower.includes("wellbeing") || lower.includes("activities")) return 8;
+  if (lower.includes("hostes")) return 9;
+  if (lower.includes("maint")) return 10;
+  return 100;
+}
+
+function sortStaffByPriority(staffList, rolePriorityMap) {
+  return [...staffList].sort((a, b) => {
+    const prioA = getStaffRolePriority(a, rolePriorityMap);
+    const prioB = getStaffRolePriority(b, rolePriorityMap);
+    if (prioA !== prioB) return prioA - prioB;
+    return (a.employeeName || a.name || "").localeCompare(b.employeeName || b.name || "");
+  });
+}
+
+function groupStaffByFloor(staffList, rolePriorityMap) {
+  const noFloor = [];
+  const topFloor = [];
+  const groundFloor = [];
+  const lowerGroundFloor = [];
+
+  staffList.forEach(st => {
+    const f = (st.floor || "").trim();
+    if (f === "Top Floor") topFloor.push(st);
+    else if (f === "Ground Floor") groundFloor.push(st);
+    else if (f === "Lower Ground Floor") lowerGroundFloor.push(st);
+    else noFloor.push(st);
+  });
+
+  return [
+    { name: "", label: "", staff: sortStaffByPriority(noFloor, rolePriorityMap), showHeader: false },
+    { name: "Top Floor", label: "🏢 Top Floor", staff: sortStaffByPriority(topFloor, rolePriorityMap), showHeader: true, bg: "#e0f2fe", color: "#0369a1" },
+    { name: "Ground Floor", label: "🏢 Ground Floor", staff: sortStaffByPriority(groundFloor, rolePriorityMap), showHeader: true, bg: "#f0fdf4", color: "#15803d" },
+    { name: "Lower Ground Floor", label: "🏢 Lower Ground Floor", staff: sortStaffByPriority(lowerGroundFloor, rolePriorityMap), showHeader: true, bg: "#fef3c7", color: "#92400e" }
+  ];
+}
+
 /* ==========================================================
    AUTHENTICATION
    ========================================================= */
@@ -381,19 +432,34 @@ async function renderRotaView() {
                   </tr>
                 </thead>
                 <tbody>
-                  ${dayStaff.map(st => {
-                    const targetThisWeek = st.weeklyTargets[week.num - 1] || 0;
+                  ${groupStaffByFloor(dayStaff, currentRotaData.rolePriorityMap).map(grp => {
+                    if (grp.staff.length === 0) return '';
                     return `
-                      <tr>
-                        <td><strong>${esc(st.employeeName)}</strong></td>
-                        <td>${esc(st.designation)}</td>
-                        <td>${st.contractHours}h <span style="color:#059669; font-size:12px; font-weight:700;">(Tgt: ${targetThisWeek} shf)</span></td>
-                        ${days.map(d => {
-                          const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-                          const status = rec ? rec.status : "OFF";
-                          return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
-                        }).join('')}
-                      </tr>
+                      ${grp.showHeader ? `
+                        <tr style="background:${grp.bg}; color:${grp.color}; font-weight:800; font-size:12px; border-top:2px solid ${grp.color}40; border-bottom:1px solid ${grp.color}30;">
+                          <td colspan="${3 + days.length}" style="padding:6px 14px; letter-spacing:0.3px;">
+                            ${grp.label} &nbsp;•&nbsp; <span style="font-size:11px; font-weight:600; opacity:0.85;">${grp.staff.length} Active Staff</span>
+                          </td>
+                        </tr>
+                      ` : ''}
+                      ${grp.staff.map(st => {
+                        const targetThisWeek = st.weeklyTargets[week.num - 1] || 0;
+                        return `
+                          <tr>
+                            <td>
+                              <strong>${esc(st.employeeName)}</strong>
+                              ${st.floor ? `<span style="font-size:10px; background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:600;">${esc(st.floor)}</span>` : ''}
+                            </td>
+                            <td>${esc(st.designation)}</td>
+                            <td>${st.contractHours}h <span style="color:#059669; font-size:12px; font-weight:700;">(Tgt: ${targetThisWeek} shf)</span></td>
+                            ${days.map(d => {
+                              const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+                              const status = rec ? rec.status : "OFF";
+                              return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
+                            }).join('')}
+                          </tr>
+                        `;
+                      }).join('')}
                     `;
                   }).join('')}
 
@@ -459,7 +525,7 @@ async function renderRotaView() {
                   </tr>
                 </thead>
                 <tbody>
-                  ${nightStaff.map(st => {
+                  ${sortStaffByPriority(nightStaff, currentRotaData.rolePriorityMap).map(st => {
                     const targetThisWeek = st.weeklyTargets[week.num - 1] || 0;
                     return `
                       <tr>
@@ -676,45 +742,58 @@ function renderMonthlyMatrixHtml(data) {
                   No staff members match the selected filters.
                 </td>
               </tr>
-            ` : filteredStaff.map(st => {
-              const isDayType = st.staffType === "D";
+            ` : groupStaffByFloor(filteredStaff, currentRotaData.rolePriorityMap).map(grp => {
+              if (grp.staff.length === 0) return '';
               return `
-                <tr style="border-bottom:1px solid #f1f5f9;">
-                  <td class="matrix-sticky-name" style="padding:6px 10px; border-right:2px solid #e2e8f0;">
-                    <strong>${esc(st.employeeName)}</strong>
-                  </td>
-                  <td class="matrix-sticky-role" style="padding:6px 10px; border-right:2px solid #e2e8f0; font-size:12px; color:#334155;">
-                    ${esc(st.designation)}
-                  </td>
-                  <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px;">
-                    ${isDayType ? '<span style="color:#d97706; font-weight:700;">☀️ Day</span>' : '<span style="color:#4f46e5; font-weight:700;">🌙 Ngt</span>'}
-                  </td>
-                  <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px; font-weight:600; color:#475569;" title="Contract Net Target: ${st.netTargetHours}h">
-                    ${st.netTargetHours}h
-                  </td>
-                  <td style="text-align:center; padding:4px; border-right:2px solid #0b3542; font-size:11px; font-weight:700; ${st.floorHoursWorked < st.netTargetHours ? 'color:#d97706;' : 'color:#15803d;'}" title="${st.floorHoursWorked < st.netTargetHours ? `Shortage: -${Math.round((st.netTargetHours - st.floorHoursWorked)*10)/10}h (click Daily Shortages to view diagnosis)` : 'Contract Hours Fulfilled'}">
-                    ${st.floorHoursWorked}h
-                  </td>
-
-                  <!-- 28 Days Cells -->
-                  ${calendarDays.map((d, idx) => {
-                    const rec = rotaIndex[st.employeeId + "_" + d.dateString];
-                    const status = rec ? rec.status : "OFF";
-                    const isWkStart = idx % 7 === 0;
-
-                    let pill = `<span style="color:#cbd5e1; font-size:11px;">—</span>`;
-                    if (status === "D") pill = `<span class="status-pill status-D" style="padding:2px 4px; font-size:10px;">D</span>`;
-                    else if (status === "N") pill = `<span class="status-pill status-N" style="padding:2px 4px; font-size:10px;">N</span>`;
-                    else if (status === "L") pill = `<span class="status-pill status-L" style="padding:2px 4px; font-size:10px;" title="Leave">L</span>`;
-                    else if (status === "TR") pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="Training">TR</span>`;
-
-                    return `
-                      <td class="${isWkStart ? 'week-sep-left' : ''} ${d.isWeekend ? 'weekend-hdr' : ''}" style="text-align:center; padding:3px 1px; border-right:1px solid #f1f5f9;">
-                        ${pill}
+                ${grp.showHeader ? `
+                  <tr style="background:${grp.bg}; color:${grp.color}; font-weight:800; font-size:12px; border-top:2px solid #cbd5e1; border-bottom:1px solid ${grp.color}30;">
+                    <td colspan="${5 + calendarDays.length}" style="padding:7px 12px; letter-spacing:0.3px;">
+                      ${grp.label} &nbsp;•&nbsp; <span style="font-size:11px; font-weight:600; opacity:0.85;">${grp.staff.length} Staff Members</span>
+                    </td>
+                  </tr>
+                ` : ''}
+                ${grp.staff.map(st => {
+                  const isDayType = st.staffType === "D";
+                  return `
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                      <td class="matrix-sticky-name" style="padding:6px 10px; border-right:2px solid #e2e8f0;">
+                        <strong>${esc(st.employeeName)}</strong>
+                        ${st.floor ? `<span style="font-size:10px; background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:600;">${esc(st.floor)}</span>` : ''}
                       </td>
-                    `;
-                  }).join('')}
-                </tr>
+                      <td class="matrix-sticky-role" style="padding:6px 10px; border-right:2px solid #e2e8f0; font-size:12px; color:#334155;">
+                        ${esc(st.designation)}
+                      </td>
+                      <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px;">
+                        ${isDayType ? '<span style="color:#d97706; font-weight:700;">☀️ Day</span>' : '<span style="color:#4f46e5; font-weight:700;">🌙 Ngt</span>'}
+                      </td>
+                      <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px; font-weight:600; color:#475569;" title="Contract Net Target: ${st.netTargetHours}h">
+                        ${st.netTargetHours}h
+                      </td>
+                      <td style="text-align:center; padding:4px; border-right:2px solid #0b3542; font-size:11px; font-weight:700; ${st.floorHoursWorked < st.netTargetHours ? 'color:#d97706;' : 'color:#15803d;'}" title="${st.floorHoursWorked < st.netTargetHours ? `Shortage: -${Math.round((st.netTargetHours - st.floorHoursWorked)*10)/10}h (click Daily Shortages to view diagnosis)` : 'Contract Hours Fulfilled'}">
+                        ${st.floorHoursWorked}h
+                      </td>
+
+                      <!-- 28 Days Cells -->
+                      ${calendarDays.map((d, idx) => {
+                        const rec = rotaIndex[st.employeeId + "_" + d.dateString];
+                        const status = rec ? rec.status : "OFF";
+                        const isWkStart = idx % 7 === 0;
+
+                        let pill = `<span style="color:#cbd5e1; font-size:11px;">—</span>`;
+                        if (status === "D") pill = `<span class="status-pill status-D" style="padding:2px 4px; font-size:10px;">D</span>`;
+                        else if (status === "N") pill = `<span class="status-pill status-N" style="padding:2px 4px; font-size:10px;">N</span>`;
+                        else if (status === "L") pill = `<span class="status-pill status-L" style="padding:2px 4px; font-size:10px;" title="Leave">L</span>`;
+                        else if (status === "TR") pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="Training">TR</span>`;
+
+                        return `
+                          <td class="${isWkStart ? 'week-sep-left' : ''} ${d.isWeekend ? 'weekend-hdr' : ''}" style="text-align:center; padding:3px 1px; border-right:1px solid #f1f5f9;">
+                            ${pill}
+                          </td>
+                        `;
+                      }).join('')}
+                    </tr>
+                  `;
+                }).join('')}
               `;
             }).join('')}
           </tbody>
@@ -1104,10 +1183,11 @@ function openClashesModal() {
 function openRuleConflictsModal(dateToSelect, initialTab) {
   if (initialTab) {
     currentConflictTab = initialTab;
-  } else if (dateToSelect && typeof dateToSelect === "string") {
+  }
+  if (dateToSelect && typeof dateToSelect === "string") {
     currentConflictSearch = dateToSelect;
     currentConflictOnlyShortages = false;
-    currentConflictTab = "daily";
+    if (!initialTab) currentConflictTab = "daily";
   }
   renderRuleConflictsModal();
 }
@@ -1359,11 +1439,6 @@ function renderRuleConflictsModal() {
                         <div style="font-weight:700; color:#0f172a; margin-bottom:3px;">📋 Why This Shortage Happened:</div>
                         ${esc(c.reason)}
                       </div>
-
-                      <!-- Management Recommendation -->
-                      <div style="margin-top:8px; background:#f0f9ff; border:1px dashed #7dd3fc; border-radius:6px; padding:8px 12px; font-size:12px; color:#0369a1; line-height:1.4;">
-                        <strong>💡 Management Recommendation:</strong> ${esc(c.recommendation)}
-                      </div>
                     </div>
                   </div>
                 `;
@@ -1489,10 +1564,13 @@ function renderRuleConflictsModal() {
                           </div>
                           <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             ${roleShortages.map(b => `
-                              <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:4px 10px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
+                              <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:5px 10px; font-size:12px; display:inline-flex; align-items:center; gap:8px;">
                                 <strong style="color:#991b1b;">${esc(b.role)}:</strong>
                                 <span style="color:#b91c1c; font-weight:800;">-${b.shortage}</span>
                                 <span style="color:#64748b; font-size:11px;">(${b.allotted} on duty / ${b.required} required)</span>
+                                <button type="button" class="btn btn-primary" style="padding:2px 8px; font-size:11px; line-height:1.2; font-weight:700;" onclick="openReallocateWizard('${e.date}', '${e.shift}', '${esc(b.role)}')">
+                                  ⚡ Reallocate Staff
+                                </button>
                               </div>
                             `).join('')}
                           </div>
@@ -1600,6 +1678,231 @@ function renderRuleConflictsModal() {
   `;
 
   document.getElementById("modalContainer").innerHTML = content;
+}
+
+function openReallocateWizard(targetDate, shiftType, targetRole) {
+  if (!currentRotaData) return;
+  const { rota, balances, calendarDays, dailyShortages } = currentRotaData;
+  const days = calendarDays || [];
+  const targetDay = days.find(d => d.dateString === targetDate);
+  const targetDayIdx = days.findIndex(d => d.dateString === targetDate);
+
+  // Eligible employees matching shiftType and capable of covering targetRole
+  const eligibleStaff = (balances || []).filter(emp => {
+    if (emp.staffType !== shiftType) return false;
+    const isMaintenance = (emp.designation || "").toLowerCase().includes("maintenance");
+    const isTargetMaintenance = (targetRole || "").toLowerCase().includes("maintenance");
+    if (isTargetMaintenance !== isMaintenance) return false;
+
+    // Check if already assigned on targetDate
+    const existingRec = (rota || []).find(r => r.employeeId === emp.employeeId && r.date === targetDate);
+    if (existingRec && existingRec.shift !== "OFF" && existingRec.shift !== "") return false;
+    if (existingRec && (existingRec.status === "L" || existingRec.status === "TR")) return false;
+
+    return true;
+  });
+
+  const candidates = [];
+  eligibleStaff.forEach(emp => {
+    const isMaintenance = (emp.designation || "").toLowerCase().includes("maintenance");
+    const maxConsecutive = isMaintenance ? 5 : 4;
+
+    // Turnaround check:
+    // If D shift, targetDate - 1 cannot be Night
+    if (shiftType === "D" && targetDayIdx > 0) {
+      const prevRec = (rota || []).find(r => r.employeeId === emp.employeeId && r.date === days[targetDayIdx - 1].dateString);
+      if (prevRec && prevRec.shift === "N") return;
+    }
+    // If N shift, targetDate + 1 cannot be Day
+    if (shiftType === "N" && targetDayIdx < days.length - 1) {
+      const nextRec = (rota || []).find(r => r.employeeId === emp.employeeId && r.date === days[targetDayIdx + 1].dateString);
+      if (nextRec && nextRec.shift === "D") return;
+    }
+
+    // Find all active shifts on other days
+    const movableShifts = (rota || []).filter(r => {
+      if (r.employeeId !== emp.employeeId) return false;
+      if (r.date === targetDate) return false;
+      if (r.shift === "OFF" || r.shift === "" || r.status === "L" || r.status === "TR") return false;
+      if (r.shift !== shiftType) return false;
+
+      // Check projected streak if moved from r.date to targetDate
+      let pBefore = 0;
+      for (let i = targetDayIdx - 1; i >= 0; i--) {
+        if (days[i].dateString === r.date) break;
+        const rec = (rota || []).find(x => x.employeeId === emp.employeeId && x.date === days[i].dateString);
+        if (rec && rec.shift !== "OFF" && rec.shift !== "") pBefore++;
+        else break;
+      }
+      let pAfter = 0;
+      for (let i = targetDayIdx + 1; i < days.length; i++) {
+        if (days[i].dateString === r.date) break;
+        const rec = (rota || []).find(x => x.employeeId === emp.employeeId && x.date === days[i].dateString);
+        if (rec && rec.shift !== "OFF" && rec.shift !== "") pAfter++;
+        else break;
+      }
+      if (1 + pBefore + pAfter > maxConsecutive) return false;
+
+      return true;
+    });
+
+    if (movableShifts.length > 0) {
+      candidates.push({
+        emp,
+        movableShifts
+      });
+    }
+  });
+
+  const content = `
+    <div class="modal-overlay" onclick="closeModal(event)">
+      <div class="modal-card" style="max-width:860px; width:95vw;" onclick="event.stopPropagation()">
+        <!-- Header -->
+        <div class="modal-header" style="background:#0f172a; color:#ffffff; border-bottom:2px solid #334155;">
+          <div>
+            <h3 style="color:#38bdf8; margin:0; font-size:18px; display:flex; align-items:center; gap:8px;">
+              <span>⚡</span> Shift Reallocation Wizard
+            </h3>
+            <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
+              Reallocate a shift to cover shortages without altering total contract hours or payroll balance.
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="closeModal()" style="padding:4px 10px; color:#fff; border-color:#475569;">✕</button>
+        </div>
+
+        <div class="modal-body" style="padding:18px 22px;">
+          <!-- Context Banner -->
+          <div style="background:#f0f9ff; border:1.5px solid #bae6fd; border-radius:8px; padding:12px 16px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:11px; font-weight:800; color:#0369a1; text-transform:uppercase; letter-spacing:0.5px;">Shortage Target</div>
+              <div style="font-size:16px; font-weight:800; color:#0c4a6e; margin-top:2px;">
+                ${esc(targetRole)} &bull; ${targetDay ? targetDay.dayName : ''}, ${formatShortDate(targetDate)}
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span style="background:${shiftType === 'D' ? '#fef3c7' : '#e0e7ff'}; color:${shiftType === 'D' ? '#b45309' : '#4338ca'}; font-weight:800; font-size:12px; padding:4px 10px; border-radius:6px;">
+                ${shiftType === 'D' ? '☀️ Day Shift' : '🌙 Night Shift'}
+              </span>
+              <span style="background:#fee2e2; color:#b91c1c; font-weight:800; font-size:12px; padding:4px 10px; border-radius:6px;">
+                Candidate Pool: ${candidates.length} Staff Available
+              </span>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div style="font-size:13px; color:#475569; margin-bottom:16px; line-height:1.5;">
+            Select an employee below who has a shift on another date. Clicking <strong>"Move Shift"</strong> transfers their working duty to <strong>${targetDay ? targetDay.dayName : ''} ${formatShortDate(targetDate)}</strong> and marks their previous day as <strong>OFF</strong>. Their monthly hours, pay, and contract commitment remain exactly unchanged.
+          </div>
+
+          <!-- Candidates List -->
+          <div style="max-height:460px; overflow-y:auto; padding-right:4px;">
+            ${candidates.length === 0 ? `
+              <div style="text-align:center; padding:36px 16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; color:#64748b;">
+                <div style="font-size:24px; margin-bottom:8px;">🔍</div>
+                <div style="font-weight:700; color:#0f172a; margin-bottom:4px;">No Reallocation Candidates Available</div>
+                <div style="font-size:12px; max-width:480px; margin:0 auto;">
+                  All qualified staff are either already scheduled on ${formatShortDate(targetDate)}, on approved leave, or moving their shift would exceed consecutive day limits (${targetRole.toLowerCase().includes('maintenance') ? '5 days' : '4 days'}).
+                </div>
+              </div>
+            ` : candidates.map(({ emp, movableShifts }) => `
+              <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04); overflow:hidden;">
+                <!-- Employee Summary Header -->
+                <div style="padding:10px 16px; background:#f8fafc; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <span style="font-weight:800; font-size:14px; color:#0f172a;">${esc(emp.employeeName)}</span>
+                    <span style="font-size:11px; font-weight:700; color:#475569; background:#ffffff; border:1px solid #cbd5e1; padding:2px 8px; border-radius:4px;">
+                      ${esc(emp.designation)}
+                    </span>
+                    ${emp.floor ? `
+                      <span style="font-size:11px; font-weight:700; color:#0369a1; background:#e0f2fe; padding:2px 8px; border-radius:4px;">
+                        🏢 ${esc(emp.floor)}
+                      </span>
+                    ` : ''}
+                    <span style="font-size:11px; color:#64748b;">
+                      (${emp.shiftsAllotted || 0} shifts scheduled &bull; ${emp.hoursWorked || 0}h / ${emp.nominalContractHours || 0}h contract)
+                    </span>
+                  </div>
+                  <span style="font-size:12px; font-weight:700; color:#0284c7;">
+                    ${movableShifts.length} Movable Shift${movableShifts.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                <!-- Movable Shifts Options -->
+                <div style="padding:12px 16px; display:flex; flex-direction:column; gap:8px;">
+                  <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase;">
+                    Choose a scheduled shift to move to ${targetDay ? targetDay.dayName.substring(0,3) : ''} ${formatShortDate(targetDate)}:
+                  </div>
+                  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:8px;">
+                    ${movableShifts.map(m => {
+                      const mDay = days.find(d => d.dateString === m.date);
+                      const mDayName = mDay ? mDay.dayName : '';
+                      const ds = (dailyShortages || []).find(s => s.date === m.date);
+                      const onDuty = ds ? (shiftType === 'D' ? ds.dayAllotted : ds.nightAllotted) : '?';
+                      const req = ds ? (shiftType === 'D' ? ds.dayRequired : ds.nightRequired) : '?';
+                      const isSurplus = onDuty > req;
+                      return `
+                        <div style="border:1px solid #cbd5e1; background:#fafafa; border-radius:6px; padding:8px 10px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                          <div>
+                            <div style="font-weight:700; font-size:12px; color:#1e293b;">
+                              📅 ${mDayName ? mDayName.substring(0,3) + ', ' : ''}${formatShortDate(m.date)}
+                            </div>
+                            <div style="font-size:11px; color:#64748b;">
+                              Staffing: <strong style="color:${isSurplus ? '#166534' : '#475569'};">${onDuty}/${req}</strong> on duty
+                            </div>
+                          </div>
+                          <button type="button" class="btn btn-primary" style="padding:4px 10px; font-size:11px; font-weight:700; white-space:nowrap;" onclick="executeShiftReallocation(${emp.employeeId}, '${m.date}', '${targetDate}', '${shiftType}', '${esc(targetRole)}')">
+                            ⚡ Move Shift &rarr;
+                          </button>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="modal-footer" style="background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+          <button class="btn btn-secondary" onclick="openRuleConflictsModal('${targetDate}', 'daily')">
+            &larr; Back to Shortages Guide
+          </button>
+          <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("modalContainer").innerHTML = content;
+}
+
+async function executeShiftReallocation(employeeId, fromDate, toDate, shiftType, coveringRole) {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch("/api/rota/reallocate-shift", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ employeeId, fromDate, toDate, shiftType, coveringRole })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("Shift reallocation failed: " + (data.error || "Unknown error"));
+      return;
+    }
+    currentRotaData = data.rota;
+    if (typeof renderRotaView === "function") {
+      renderRotaView();
+    }
+    // Reopen rule conflicts modal showing the target date to verify shortage was resolved
+    openRuleConflictsModal(toDate, 'daily');
+  } catch (err) {
+    console.error("Reallocation error:", err);
+    alert("Network error while reallocating shift: " + err.message);
+  }
 }
 
 function downloadBlob(buffer, filename) {
@@ -1739,23 +2042,38 @@ async function exportRotaToExcel() {
             });
           });
 
-          dayStaffList.forEach((st, idx) => {
-            let dayShiftsWorked = 0;
-            const daysVals = w.days.map(d => {
-              const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-              const s = rec ? rec.status : "OFF";
-              if (s === "D") dayShiftsWorked++;
-              return s;
-            });
+          let dayRowCounter = 0;
+          groupStaffByFloor(dayStaffList, currentRotaData.rolePriorityMap).forEach(grp => {
+            if (grp.staff.length === 0) return;
+            if (grp.showHeader) {
+              const floorSepRow = wsDay.addRow([grp.label, "", "", ...w.days.map(() => ""), ""]);
+              floorSepRow.height = 22;
+              floorSepRow.eachCell(cell => {
+                cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: (grp.color || "#0369a1").replace('#', 'FF') } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: (grp.bg || "#e0f2fe").replace('#', 'FF') } };
+                cell.alignment = { vertical: 'middle', horizontal: 'left' };
+              });
+            }
 
-            const row = wsDay.addRow([
-              st.employeeName,
-              st.designation,
-              `${st.contractHours}h`,
-              ...daysVals,
-              dayShiftsWorked
-            ]);
-            applyDataRowStyle(row, idx % 2 === 1);
+            grp.staff.forEach(st => {
+              let dayShiftsWorked = 0;
+              const daysVals = w.days.map(d => {
+                const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+                const s = rec ? rec.status : "OFF";
+                if (s === "D") dayShiftsWorked++;
+                return s;
+              });
+
+              const row = wsDay.addRow([
+                st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+                st.designation,
+                `${st.contractHours}h`,
+                ...daysVals,
+                dayShiftsWorked
+              ]);
+              applyDataRowStyle(row, dayRowCounter % 2 === 1);
+              dayRowCounter++;
+            });
           });
 
           // Day Quota summaries
@@ -1835,7 +2153,7 @@ async function exportRotaToExcel() {
             });
           });
 
-          nightStaffList.forEach((st, idx) => {
+          sortStaffByPriority(nightStaffList, currentRotaData.rolePriorityMap).forEach((st, idx) => {
             let nightShiftsWorked = 0;
             const daysVals = w.days.map(d => {
               const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
@@ -1924,30 +2242,45 @@ async function exportRotaToExcel() {
           { width: 24 }
         ];
 
-        const staffList = [...balances].sort((a, b) => a.designation.localeCompare(b.designation) || a.employeeName.localeCompare(b.employeeName));
-        staffList.forEach((st, idx) => {
-          let dayCount = 0;
-          let nightCount = 0;
-          const daysStatus = calendarDays.map(d => {
-            const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-            const s = rec ? rec.status : "OFF";
-            if (s === "D") dayCount++;
-            if (s === "N") nightCount++;
-            return s;
-          });
+        const staffList = [...balances];
+        let mRowIdx = 0;
+        groupStaffByFloor(staffList, currentRotaData.rolePriorityMap).forEach(grp => {
+          if (grp.staff.length === 0) return;
+          if (grp.showHeader) {
+            const floorSepRow = ws.addRow([grp.label, "", "", ...calendarDays.map(() => ""), "", "", "", "", ""]);
+            floorSepRow.height = 24;
+            floorSepRow.eachCell(cell => {
+              cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: (grp.color || "#0369a1").replace('#', 'FF') } };
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: (grp.bg || "#e0f2fe").replace('#', 'FF') } };
+              cell.alignment = { vertical: 'middle', horizontal: 'left' };
+            });
+          }
 
-          const row = ws.addRow([
-            st.employeeName,
-            st.designation,
-            `${st.contractHours}h`,
-            ...daysStatus,
-            dayCount,
-            nightCount,
-            st.floorShiftsWorked,
-            `${st.floorHoursWorked}h`,
-            st.contractStatus
-          ]);
-          applyDataRowStyle(row, idx % 2 === 1);
+          grp.staff.forEach(st => {
+            let dayCount = 0;
+            let nightCount = 0;
+            const daysStatus = calendarDays.map(d => {
+              const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+              const s = rec ? rec.status : "OFF";
+              if (s === "D") dayCount++;
+              if (s === "N") nightCount++;
+              return s;
+            });
+
+            const row = ws.addRow([
+              st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+              st.designation,
+              `${st.contractHours}h`,
+              ...daysStatus,
+              dayCount,
+              nightCount,
+              st.floorShiftsWorked,
+              `${st.floorHoursWorked}h`,
+              st.contractStatus
+            ]);
+            applyDataRowStyle(row, mRowIdx % 2 === 1);
+            mRowIdx++;
+          });
         });
 
         const buffer = await workbook.xlsx.writeBuffer();
@@ -2059,7 +2392,7 @@ async function exportRotaToExcel() {
   const wb = XLSX.utils.book_new();
 
   if (rotaSubView === "weekly") {
-    const staffList = [...balances].sort((a, b) => a.designation.localeCompare(b.designation) || a.employeeName.localeCompare(b.employeeName));
+    const staffList = [...balances];
 
     weeks.forEach(w => {
       // 1. Day Sheet
@@ -2071,21 +2404,32 @@ async function exportRotaToExcel() {
         });
       });
 
-      const dayRows = dayStaffList.map(st => {
-        let dayShiftsWorked = 0;
-        const row = {
-          "Staff Name": st.employeeName,
-          "Role": st.designation,
-          "Contract Target": `${st.contractHours}h`
-        };
-        w.days.forEach(d => {
-          const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-          const s = rec ? rec.status : "OFF";
-          if (s === "D") dayShiftsWorked++;
-          row[`${d.dayName.substring(0,3)} (${formatShortDate(d.dateString)})`] = s;
+      const dayRows = [];
+      groupStaffByFloor(dayStaffList, currentRotaData.rolePriorityMap).forEach(grp => {
+        if (grp.staff.length === 0) return;
+        if (grp.showHeader) {
+          dayRows.push({
+            "Staff Name": `--- ${grp.label} ---`,
+            "Role": `${grp.staff.length} Staff`,
+            "Contract Target": ""
+          });
+        }
+        grp.staff.forEach(st => {
+          let dayShiftsWorked = 0;
+          const row = {
+            "Staff Name": st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+            "Role": st.designation,
+            "Contract Target": `${st.contractHours}h`
+          };
+          w.days.forEach(d => {
+            const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+            const s = rec ? rec.status : "OFF";
+            if (s === "D") dayShiftsWorked++;
+            row[`${d.dayName.substring(0,3)} (${formatShortDate(d.dateString)})`] = s;
+          });
+          row["Day Shifts Worked"] = dayShiftsWorked;
+          dayRows.push(row);
         });
-        row["Day Shifts Worked"] = dayShiftsWorked;
-        return row;
       });
       const wsDay = XLSX.utils.json_to_sheet(dayRows);
       wsDay['!cols'] = [{ wch: 26 }, { wch: 18 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }];
@@ -2100,7 +2444,7 @@ async function exportRotaToExcel() {
         });
       });
 
-      const nightRows = nightStaffList.map(st => {
+      const nightRows = sortStaffByPriority(nightStaffList, currentRotaData.rolePriorityMap).map(st => {
         let nightShiftsWorked = 0;
         const row = {
           "Staff Name": st.employeeName,
@@ -2123,20 +2467,31 @@ async function exportRotaToExcel() {
     XLSX.writeFile(wb, `CareHome_Weekly_Rota_${safePeriod}.xlsx`);
 
   } else if (rotaSubView === "monthly") {
-    const rows = balances.map(st => {
-      const row = {
-        "Staff Name": st.employeeName,
-        "Role": st.designation,
-        "Contract Target": `${st.contractHours}h`
-      };
-      calendarDays.forEach(d => {
-        const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-        row[`${d.dayName.substring(0,3)} ${formatShortDate(d.dateString)}`] = rec ? rec.status : "OFF";
+    const rows = [];
+    groupStaffByFloor(balances, currentRotaData.rolePriorityMap).forEach(grp => {
+      if (grp.staff.length === 0) return;
+      if (grp.showHeader) {
+        rows.push({
+          "Staff Name": `--- ${grp.label} ---`,
+          "Role": `${grp.staff.length} Staff`,
+          "Contract Target": ""
+        });
+      }
+      grp.staff.forEach(st => {
+        const row = {
+          "Staff Name": st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+          "Role": st.designation,
+          "Contract Target": `${st.contractHours}h`
+        };
+        calendarDays.forEach(d => {
+          const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+          row[`${d.dayName.substring(0,3)} ${formatShortDate(d.dateString)}`] = rec ? rec.status : "OFF";
+        });
+        row["Floor Shifts Worked"] = st.floorShiftsWorked;
+        row["Floor Hours Worked"] = `${st.floorHoursWorked}h`;
+        row["Fulfillment Status"] = st.contractStatus;
+        rows.push(row);
       });
-      row["Floor Shifts Worked"] = st.floorShiftsWorked;
-      row["Floor Hours Worked"] = `${st.floorHoursWorked}h`;
-      row["Fulfillment Status"] = st.contractStatus;
-      return row;
     });
     const ws = XLSX.utils.json_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws, "Monthly Staff Matrix");
@@ -2224,18 +2579,33 @@ function preparePrintContainer() {
             </tr>
           </thead>
           <tbody>
-            ${dayStaff.map(st => {
+            ${groupStaffByFloor(dayStaff, currentRotaData.rolePriorityMap).map(grp => {
+              if (grp.staff.length === 0) return '';
               return `
-                <tr>
-                  <td><strong>${esc(st.employeeName)}</strong></td>
-                  <td>${esc(st.designation)}</td>
-                  <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
-                  ${w.days.map(d => {
-                    const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-                    const status = rec ? rec.status : "OFF";
-                    return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
-                  }).join('')}
-                </tr>
+                ${grp.showHeader ? `
+                  <tr style="background:#e2e8f0; font-weight:800; font-size:9pt; color:#0f172a; border-top:1.5px solid #cbd5e1; border-bottom:1px solid #cbd5e1;">
+                    <td colspan="${3 + w.days.length}" style="padding:4px 8px;">
+                      ${grp.label} &bull; ${grp.staff.length} Active Staff
+                    </td>
+                  </tr>
+                ` : ''}
+                ${grp.staff.map(st => {
+                  return `
+                    <tr>
+                      <td>
+                        <strong>${esc(st.employeeName)}</strong>
+                        ${st.floor ? `<span style="font-size:7.5pt; color:#475569; margin-left:4px;">[${esc(st.floor)}]</span>` : ''}
+                      </td>
+                      <td>${esc(st.designation)}</td>
+                      <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
+                      ${w.days.map(d => {
+                        const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
+                        const status = rec ? rec.status : "OFF";
+                        return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
+                      }).join('')}
+                    </tr>
+                  `;
+                }).join('')}
               `;
             }).join('')}
           </tbody>
@@ -2284,7 +2654,7 @@ function preparePrintContainer() {
             </tr>
           </thead>
           <tbody>
-            ${nightStaff.map(st => {
+            ${sortStaffByPriority(nightStaff, currentRotaData.rolePriorityMap).map(st => {
               return `
                 <tr>
                   <td><strong>${esc(st.employeeName)}</strong></td>
@@ -2358,6 +2728,7 @@ async function renderEmployeesView() {
               <tr>
                 <th>Staff Name</th>
                 <th>Role / Designation</th>
+                <th style="background:#f8fafc; color:#0f172a;">Floor</th>
                 <th>Weekly Contract</th>
                 <th style="background:#e0f2fe; color:#0369a1;">Shift Duration</th>
                 <th>Shift Type</th>
@@ -2370,6 +2741,9 @@ async function renderEmployeesView() {
                 <tr>
                   <td><strong>${esc(emp.name)}</strong></td>
                   <td>${esc(emp.designation)}</td>
+                  <td>
+                    ${emp.floor ? `<span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">🏢 ${esc(emp.floor)}</span>` : '<span style="color:#94a3b8; font-size:12px;">—</span>'}
+                  </td>
                   <td>${emp.contract_hours} hrs/wk</td>
                   <td style="font-weight:700; color:#0284c7;">${emp.shift_hours || 11} hrs/shift</td>
                   <td>
@@ -2442,16 +2816,27 @@ async function openEmployeeModal(emp = null) {
               </select>
             </div>
 
+            <div class="form-group">
+              <label>Assigned Floor</label>
+              <select id="empFloor" class="form-control">
+                <option value="" ${!emp || !emp.floor ? 'selected' : ''}>-- No Floor / Unassigned --</option>
+                <option value="Top Floor" ${emp && emp.floor === 'Top Floor' ? 'selected' : ''}>🏢 Top Floor</option>
+                <option value="Ground Floor" ${emp && emp.floor === 'Ground Floor' ? 'selected' : ''}>🏢 Ground Floor</option>
+                <option value="Lower Ground Floor" ${emp && emp.floor === 'Lower Ground Floor' ? 'selected' : ''}>🏢 Lower Ground Floor</option>
+              </select>
+              <small style="color:#64748b; font-size:11px;">Primary floor assignment (leave blank for night staff or unassigned)</small>
+            </div>
+
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
               <div class="form-group">
                 <label>Weekly Contract Hours</label>
-                <input type="number" step="0.5" id="empContract" class="form-control" required value="${emp ? emp.contract_hours : '44'}">
+                <input type="number" step="any" id="empContract" class="form-control" required value="${emp ? emp.contract_hours : '44'}">
               </div>
 
               <div class="form-group">
                 <label>Shift Duration (Hours)</label>
-                <input type="number" step="0.5" id="empShiftHours" class="form-control" required value="${emp ? (emp.shift_hours || 11) : '11'}">
-                <small style="color:#64748b; font-size:11px;">Default is 11 hours per shift</small>
+                <input type="number" step="any" id="empShiftHours" class="form-control" required value="${emp ? (emp.shift_hours || 11) : '11'}">
+                <small style="color:#64748b; font-size:11px;">Arbitrary decimal values allowed (e.g. 11, 7.5, 8.25)</small>
               </div>
             </div>
 
@@ -2488,6 +2873,7 @@ async function saveEmployee(e, empId) {
   e.preventDefault();
   const name = document.getElementById("empName").value;
   const designation = document.getElementById("empDesig").value;
+  const floor = document.getElementById("empFloor").value.trim();
   const contract_hours = parseFloat(document.getElementById("empContract").value) || 44;
   const shift_hours = parseFloat(document.getElementById("empShiftHours").value) || 11;
   const staff_type = document.getElementById("empShiftType").value;
@@ -2497,12 +2883,12 @@ async function saveEmployee(e, empId) {
     if (empId) {
       await apiFetch(`/api/employees/${empId}`, {
         method: "PUT",
-        body: JSON.stringify({ name, designation, contract_hours, shift_hours, staff_type, active })
+        body: JSON.stringify({ name, designation, floor, contract_hours, shift_hours, staff_type, active })
       });
     } else {
       await apiFetch("/api/employees", {
         method: "POST",
-        body: JSON.stringify({ name, designation, contract_hours, shift_hours, staff_type, active })
+        body: JSON.stringify({ name, designation, floor, contract_hours, shift_hours, staff_type, active })
       });
     }
     closeModal();

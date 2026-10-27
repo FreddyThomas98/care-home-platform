@@ -64,10 +64,12 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   // Build hierarchy mapping and role days per week
   const roleHierarchyMap = {};
   const roleDaysPerWeek = {};
+  const rolePriorityMap = {};
   hierarchyList.forEach(h => {
     const subs = [h.required_role, h.substitute_1, h.substitute_2, h.substitute_3, h.substitute_4].filter(Boolean);
     roleHierarchyMap[h.required_role] = subs;
     roleDaysPerWeek[h.required_role] = parseInt(h.days_per_week, 10) || 7;
+    rolePriorityMap[h.required_role] = parseInt(h.priority, 10);
   });
 
   // Helper: Get required quota for role on a given day (respects days_per_week)
@@ -153,6 +155,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       id: emp.id,
       name: emp.name,
       designation: emp.designation,
+      floor: emp.floor || "",
       staffType: emp.staff_type || "D",
       contractHours: contractHours,
       shiftHours: shiftHours,
@@ -402,7 +405,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       // Hard unavailability check
       if (isUnavailable(state.id, dStr, dayInfo.dayName)) return false;
 
-      // Consecutive days limit (target 4, max 5 across boundaries)
+      // Consecutive days limit (target 4, max 5 for maintenance staff)
+      const isMaintenance = Boolean(state.designation && state.designation.toLowerCase().includes("maint"));
+      const maxConsecutive = isMaintenance ? 5 : 4;
       const dayIdx = calendarDays.findIndex(d => d.dateString === dStr);
       let consecutive = 1;
       for (let i = dayIdx - 1; i >= 0; i--) {
@@ -416,8 +421,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         else break;
       }
 
-      // Strictly enforce max 4 consecutive working days
-      if (consecutive > 4) return false;
+      // Strictly enforce consecutive working days limit (5 for maintenance, 4 for others)
+      if (consecutive > maxConsecutive) return false;
 
       // Night-to-Day Turnaround Rest:
       // If employee worked Sunday Night, they cannot work Monday Day (needs sleep turnaround)
@@ -654,7 +659,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
-  // PASS 7: Monthly Contract Hours Equalization Sweep
+  // PASS 7A: Monthly Contract Hours Equalization Sweep (Strict Quota / Zero Overstaffing)
   // User Instruction: 1st preference is meet contract hours without overstaffing.
   // Weekend rule can be skipped if needed to fulfill rota fairly.
   Object.values(empState).forEach(st => {
@@ -667,6 +672,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     const netTargetShifts = Math.max(0, st.totalMonthlyTargetShifts - empLeaveCount);
 
     if (st.totalShiftsWorked >= netTargetShifts) return;
+
+    const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+    const maxConsecutive = isMaintenance ? 5 : 4;
 
     calendarDays.forEach((dayInfo, dayIdx) => {
       if (st.totalShiftsWorked >= netTargetShifts) return;
@@ -694,7 +702,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       }
       if (isUnavailable(st.id, dStr, dayInfo.dayName)) return;
 
-      // Check consecutive days (max 4)
+      // Check consecutive days (max 5 for maintenance, 4 for others)
       let consecutive = 1;
       for (let i = dayIdx - 1; i >= 0; i--) {
         const prev = st.assignedShifts[calendarDays[i].dateString];
@@ -706,7 +714,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         if (next && (next.shift === "D" || next.shift === "N")) consecutive++;
         else break;
       }
-      if (consecutive > 4) return;
+      if (consecutive > maxConsecutive) return;
 
       // Turnaround Rest in Pass 7:
       if (dayInfo.dayName === "Monday" && shiftType === "D" && dayIdx > 0) {
@@ -732,11 +740,108 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
+  // PASS 7B: Smart Overstaffing Fallback (User Rule)
+  // If contract hours are not met because all role slots are filled, allot them to fulfill their contract
+  // hours on days where the total staff count is lowest, while strictly respecting all safety and rest rules.
+  Object.values(empState).forEach(st => {
+    let empLeaveCount = 0;
+    calendarDays.forEach(d => {
+      const a = st.assignedShifts[d.dateString];
+      if (a && a.status === "L") empLeaveCount++;
+    });
+    const netTargetShifts = Math.max(0, st.totalMonthlyTargetShifts - empLeaveCount);
+
+    if (st.totalShiftsWorked >= netTargetShifts) return;
+
+    const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+    const maxConsecutive = isMaintenance ? 5 : 4;
+    const shiftType = st.staffType;
+    const reqRole = st.designation;
+
+    // Collect candidate days that satisfy all safety and rest rules
+    const candidateDays = [];
+    calendarDays.forEach((dayInfo, dayIdx) => {
+      const dStr = dayInfo.dateString;
+      const existing = st.assignedShifts[dStr];
+      if (existing) {
+        if (existing.status === "L" || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
+          return;
+        }
+      }
+      if (isUnavailable(st.id, dStr, dayInfo.dayName)) return;
+
+      let consecutive = 1;
+      for (let i = dayIdx - 1; i >= 0; i--) {
+        const prev = st.assignedShifts[calendarDays[i].dateString];
+        if (prev && (prev.shift === "D" || prev.shift === "N")) consecutive++;
+        else break;
+      }
+      for (let i = dayIdx + 1; i < calendarDays.length; i++) {
+        const next = st.assignedShifts[calendarDays[i].dateString];
+        if (next && (next.shift === "D" || next.shift === "N")) consecutive++;
+        else break;
+      }
+      if (consecutive > maxConsecutive) return;
+
+      if (dayInfo.dayName === "Monday" && shiftType === "D" && dayIdx > 0) {
+        const prev = st.assignedShifts[calendarDays[dayIdx - 1].dateString];
+        if (prev && prev.shift === "N") return;
+      }
+
+      if (shiftType === "N" && dayIdx < calendarDays.length - 1) {
+        const nextDay = calendarDays[dayIdx + 1];
+        const nextAsgn = st.assignedShifts[nextDay.dateString];
+        if (nextAsgn && nextAsgn.status === "TR") return;
+      }
+
+      // Count total staff on duty on this day for this shift
+      const totalStaffOnDay = Object.values(empState).filter(s => {
+        const asgn = s.assignedShifts[dStr];
+        return asgn && asgn.shift === shiftType && asgn.status !== "TR";
+      }).length;
+
+      candidateDays.push({ dayInfo, dayIdx, totalStaffOnDay });
+    });
+
+    // Prioritize days with the lowest total staffing (smart overstaffing fallback)
+    candidateDays.sort((a, b) => a.totalStaffOnDay - b.totalStaffOnDay);
+
+    for (const cand of candidateDays) {
+      if (st.totalShiftsWorked >= netTargetShifts) break;
+      const dStr = cand.dayInfo.dateString;
+      const dayIdx = cand.dayIdx;
+
+      // Re-verify consecutive streak doesn't exceed limit
+      let consecutive = 1;
+      for (let i = dayIdx - 1; i >= 0; i--) {
+        const prev = st.assignedShifts[calendarDays[i].dateString];
+        if (prev && (prev.shift === "D" || prev.shift === "N")) consecutive++;
+        else break;
+      }
+      for (let i = dayIdx + 1; i < calendarDays.length; i++) {
+        const next = st.assignedShifts[calendarDays[i].dateString];
+        if (next && (next.shift === "D" || next.shift === "N")) consecutive++;
+        else break;
+      }
+      if (consecutive > maxConsecutive) continue;
+
+      st.assignedShifts[dStr] = {
+        shift: shiftType,
+        status: shiftType,
+        coveringRole: reqRole
+      };
+      st.totalShiftsWorked++;
+      st.totalHoursWorked += st.shiftHours;
+    }
+  });
+
   // 6. Post-Scheduling Audit: Consecutive Work Streaks across Week Boundaries
-  // User Decision #5: Warn if consecutive > 4 and suggest solutions
+  // User Decision #5: Warn if consecutive > 4 (or > 5 for maintenance staff) and suggest solutions
   Object.values(empState).forEach(st => {
     let streak = 0;
     let streakStart = null;
+    const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+    const maxConsecutive = isMaintenance ? 5 : 4;
 
     calendarDays.forEach((day, idx) => {
       const asgn = st.assignedShifts[day.dateString];
@@ -744,7 +849,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         if (streak === 0) streakStart = day.dateString;
         streak++;
       } else {
-        if (streak > 4) {
+        if (streak > maxConsecutive) {
           warnings.push({
             type: "consecutive_streak",
             employee: st.name,
@@ -842,7 +947,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               category: "Preference"
             };
           } else {
-            // Check consecutive days (max 4 days streak limit)
+            // Check consecutive days (max 4 days streak limit, 5 for maintenance staff)
+            const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+            const maxConsecutive = isMaintenance ? 5 : 4;
             let consecutive = 1;
             for (let i = dayIdx - 1; i >= 0; i--) {
               const p = st.assignedShifts[calendarDays[i].dateString];
@@ -855,12 +962,12 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               else break;
             }
 
-            if (consecutive > 4) {
-              reason = "Consecutive Days Limit: Staff already worked 4 days in a row; resting to prevent a 5-day streak";
+            if (consecutive > maxConsecutive) {
+              reason = `Consecutive Days Limit: Staff already worked ${maxConsecutive} days in a row; resting to prevent a ${maxConsecutive + 1}-day streak`;
               conflictMeta = {
-                conflictingRules: "Consecutive Days Limit (Max 4 Days) vs. Daily Staff Quota",
-                winningRule: "4-Day Streak Safety Limit",
-                resolution: "Mandatory rest day enforced to prevent 5-day fatigue streak",
+                conflictingRules: `Consecutive Days Limit (Max ${maxConsecutive} Days) vs. Daily Staff Quota`,
+                winningRule: `${maxConsecutive}-Day Streak Safety Limit`,
+                resolution: `Mandatory rest day enforced to prevent ${maxConsecutive + 1}-day fatigue streak`,
                 impact: "Employee rested; quota recorded as shortage",
                 category: "Fatigue & Safety"
               };
@@ -987,7 +1094,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               category: "Preference"
             };
           } else {
-            // Check consecutive days (max 4 days streak limit)
+            // Check consecutive days (max 4 days streak limit, 5 for maintenance staff)
+            const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+            const maxConsecutive = isMaintenance ? 5 : 4;
             let consecutive = 1;
             for (let i = dayIdx - 1; i >= 0; i--) {
               const p = st.assignedShifts[calendarDays[i].dateString];
@@ -1000,12 +1109,12 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               else break;
             }
 
-            if (consecutive > 4) {
-              reason = "Consecutive Days Limit: Staff already worked 4 days in a row; resting to prevent a 5-day streak";
+            if (consecutive > maxConsecutive) {
+              reason = `Consecutive Days Limit: Staff already worked ${maxConsecutive} days in a row; resting to prevent a ${maxConsecutive + 1}-day streak`;
               conflictMeta = {
-                conflictingRules: "Consecutive Days Limit (Max 4 Days) vs. Daily Night Quota",
-                winningRule: "4-Day Streak Safety Limit",
-                resolution: "Mandatory rest enforced to prevent 5-day fatigue streak",
+                conflictingRules: `Consecutive Days Limit (Max ${maxConsecutive} Days) vs. Daily Night Quota`,
+                winningRule: `${maxConsecutive}-Day Streak Safety Limit`,
+                resolution: `Mandatory rest enforced to prevent ${maxConsecutive + 1}-day fatigue streak`,
                 impact: "Employee rested; night quota recorded as shortage",
                 category: "Fatigue & Safety"
               };
@@ -1129,6 +1238,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         employeeId: st.id, // backend-only, not exposed in UI tables
         employeeName: st.name,
         designation: st.designation,
+        floor: st.floor || "",
         contractHours: st.contractHours,
         shiftHours: st.shiftHours,
         shift: asgn.shift,
@@ -1150,6 +1260,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       employeeId: st.id,
       employeeName: st.name,
       designation: st.designation,
+      floor: st.floor || "",
       staffType: st.staffType,
       contractHours: st.contractHours,
       shiftHours: st.shiftHours,
@@ -1235,7 +1346,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     rota: flatRota,
     warnings: warnings,
     clashes: clashes,
-    ruleConflicts: ruleConflicts
+    ruleConflicts: ruleConflicts,
+    rolePriorityMap: rolePriorityMap
   };
 }
 

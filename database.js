@@ -34,6 +34,12 @@ if (isPostgres) {
   try {
     sqliteDb.exec("PRAGMA journal_mode = WAL;");
     sqliteDb.exec("PRAGMA foreign_keys = ON;");
+    try {
+      const empCols = sqliteDb.prepare("PRAGMA table_info(employees)").all();
+      if (empCols.length > 0 && !empCols.some(c => c.name === "floor")) {
+        sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
+      }
+    } catch (err) {}
   } catch (e) {
     // Ignore pragma errors if in memory or unsupported
   }
@@ -110,6 +116,7 @@ async function init() {
         id VARCHAR(50) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         designation VARCHAR(100) NOT NULL,
+        floor VARCHAR(100) DEFAULT '',
         contract_hours NUMERIC NOT NULL DEFAULT 44.0,
         shift_hours NUMERIC NOT NULL DEFAULT 11.0,
         staff_type VARCHAR(10) NOT NULL DEFAULT 'D',
@@ -136,6 +143,7 @@ async function init() {
       );
 
       ALTER TABLE role_hierarchy ADD COLUMN IF NOT EXISTS days_per_week INTEGER NOT NULL DEFAULT 7;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS floor VARCHAR(100) DEFAULT '';
       ALTER TABLE preferences ALTER COLUMN target_day TYPE VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS leave_records (
@@ -198,8 +206,8 @@ async function init() {
 
         for (const e of (seedData.employees || [])) {
           await pgPool.query(
-            "INSERT INTO employees (id, name, designation, contract_hours, shift_hours, staff_type, active) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING",
-            [e.id, e.name, e.designation, e.contract_hours, e.shift_hours, e.staff_type, e.active]
+            "INSERT INTO employees (id, name, designation, contract_hours, shift_hours, staff_type, active, floor) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING",
+            [e.id, e.name, e.designation, e.contract_hours, e.shift_hours, e.staff_type, e.active, e.floor || '']
           );
         }
 
@@ -246,6 +254,7 @@ async function init() {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           designation TEXT NOT NULL,
+          floor TEXT DEFAULT '',
           contract_hours REAL NOT NULL DEFAULT 44.0,
           shift_hours REAL NOT NULL DEFAULT 11.0,
           staff_type TEXT NOT NULL DEFAULT 'D',
@@ -316,6 +325,11 @@ async function init() {
       const cols = sqliteDb.prepare("PRAGMA table_info(role_hierarchy)").all();
       if (!cols.some(c => c.name === "days_per_week")) {
         sqliteDb.exec("ALTER TABLE role_hierarchy ADD COLUMN days_per_week INTEGER NOT NULL DEFAULT 7;");
+      }
+
+      const empCols = sqliteDb.prepare("PRAGMA table_info(employees)").all();
+      if (!empCols.some(c => c.name === "floor")) {
+        sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
     } catch (e) {
       console.warn("SQLite schema / migration check:", e.message);

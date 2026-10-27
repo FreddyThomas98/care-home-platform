@@ -148,7 +148,7 @@ app.get("/api/employees", authenticateToken, async (req, res) => {
 });
 
 app.post("/api/employees", authenticateToken, async (req, res) => {
-  const { name, designation, contract_hours, shift_hours, staff_type, active } = req.body;
+  const { name, designation, contract_hours, shift_hours, staff_type, active, floor } = req.body;
   if (!name || !designation) {
     return res.status(400).json({ error: "Name and designation are required." });
   }
@@ -167,11 +167,12 @@ app.post("/api/employees", authenticateToken, async (req, res) => {
     const sHours = parseFloat(shift_hours) || 11.0;
     const sType = String(staff_type || "D").toUpperCase() === "N" ? "N" : "D";
     const isActive = active !== undefined ? (active ? 1 : 0) : 1;
+    const empFloor = floor ? String(floor).trim() : "";
 
     await db.execute(`
-      INSERT INTO employees (id, name, designation, contract_hours, shift_hours, staff_type, active)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [autoId, name.trim(), designation.trim(), cHours, sHours, sType, isActive]);
+      INSERT INTO employees (id, name, designation, contract_hours, shift_hours, staff_type, active, floor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [autoId, name.trim(), designation.trim(), cHours, sHours, sType, isActive, empFloor]);
 
     res.json({ success: true, id: autoId });
   } catch (err) {
@@ -180,20 +181,21 @@ app.post("/api/employees", authenticateToken, async (req, res) => {
 });
 
 app.put("/api/employees/:id", authenticateToken, async (req, res) => {
-  const { name, designation, contract_hours, shift_hours, staff_type, active } = req.body;
+  const { name, designation, contract_hours, shift_hours, staff_type, active, floor } = req.body;
   const empId = req.params.id;
 
   const cHours = parseFloat(contract_hours) || 44.0;
   const sHours = parseFloat(shift_hours) || 11.0;
   const sType = String(staff_type || "D").toUpperCase() === "N" ? "N" : "D";
   const isActive = active !== undefined ? (active ? 1 : 0) : 1;
+  const empFloor = floor !== undefined ? String(floor).trim() : "";
 
   try {
     await db.execute(`
       UPDATE employees
-      SET name = ?, designation = ?, contract_hours = ?, shift_hours = ?, staff_type = ?, active = ?
+      SET name = ?, designation = ?, contract_hours = ?, shift_hours = ?, staff_type = ?, active = ?, floor = ?
       WHERE id = ?
-    `, [name.trim(), designation.trim(), cHours, sHours, sType, isActive, empId]);
+    `, [name.trim(), designation.trim(), cHours, sHours, sType, isActive, empFloor, empId]);
 
     res.json({ success: true });
   } catch (err) {
@@ -595,6 +597,134 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
     res.json(JSON.parse(saved.rota_json));
   } catch (err) {
     console.error("Fetch latest rota error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/rota/reallocate-shift", authenticateToken, async (req, res) => {
+  const { employeeId, fromDate, toDate, shiftType, coveringRole } = req.body;
+  if (!employeeId || !fromDate || !toDate) {
+    return res.status(400).json({ error: "employeeId, fromDate, and toDate are required." });
+  }
+
+  try {
+    const saved = await db.queryOne("SELECT * FROM saved_rotas ORDER BY id DESC LIMIT 1");
+    if (!saved) {
+      return res.status(404).json({ error: "No saved rota found to reallocate shifts." });
+    }
+
+    const rotaData = JSON.parse(saved.rota_json);
+    const rotaList = rotaData.rota || [];
+
+    const fromRecord = rotaList.find(r => r.employeeId === employeeId && r.date === fromDate);
+    const toRecord = rotaList.find(r => r.employeeId === employeeId && r.date === toDate);
+
+    if (!fromRecord || !toRecord) {
+      return res.status(400).json({ error: "Shift records not found for specified dates." });
+    }
+
+    const actualShiftType = shiftType || fromRecord.shift || "D";
+    const actualRole = coveringRole || fromRecord.coveringRole || fromRecord.designation;
+
+    // Move shift: fromDate becomes OFF, toDate becomes the shift
+    fromRecord.shift = "OFF";
+    fromRecord.status = "OFF";
+    fromRecord.coveringRole = "";
+
+    toRecord.shift = actualShiftType;
+    toRecord.status = actualShiftType;
+    toRecord.coveringRole = actualRole;
+
+    // Recalculate dailyShortages and clashes for fromDate and toDate
+    const reqList = await db.queryAll("SELECT * FROM requirements");
+    const hList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+    const roleHierarchyMap = {};
+    const roleDaysPerWeek = {};
+    hList.forEach(h => {
+      roleHierarchyMap[h.required_role] = [h.required_role, h.substitute_1, h.substitute_2, h.substitute_3, h.substitute_4].filter(Boolean);
+      roleDaysPerWeek[h.required_role] = parseInt(h.days_per_week, 10) || 7;
+    });
+
+    const getReqQuota = (role, sType, dayInfo) => {
+      const match = reqList.find(r => r.role_name === role);
+      if (!match) return 0;
+      const base = sType === "D" ? (match.day_required || 0) : (match.night_required || 0);
+      if (base <= 0) return 0;
+      const maxDays = roleDaysPerWeek[role] !== undefined ? roleDaysPerWeek[role] : 7;
+      const dIdx = (dayInfo.dayOfWeek + 6) % 7;
+      if (dIdx >= maxDays) return 0;
+      return base;
+    };
+
+    (rotaData.dailyShortages || []).forEach(ds => {
+      if (ds.date === fromDate || ds.date === toDate) {
+        const dayInfo = (rotaData.calendarDays || []).find(d => d.dateString === ds.date) || { dayOfWeek: 1 };
+        const dAllotted = rotaList.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR").length;
+        const nAllotted = rotaList.filter(r => r.date === ds.date && r.shift === "N").length;
+
+        ds.dayAllotted = dAllotted;
+        ds.dayShortage = Math.max(0, ds.dayRequired - dAllotted);
+        ds.nightAllotted = nAllotted;
+        ds.nightShortage = Math.max(0, ds.nightRequired - nAllotted);
+
+        if (ds.dayBreakdown) {
+          ds.dayBreakdown.forEach(b => {
+            const req = getReqQuota(b.role, "D", dayInfo);
+            const allotted = rotaList.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR" && (r.coveringRole === b.role || r.designation === b.role)).length;
+            b.allotted = allotted;
+            b.shortage = Math.max(0, req - allotted);
+          });
+        }
+        if (ds.nightBreakdown) {
+          ds.nightBreakdown.forEach(b => {
+            const req = getReqQuota(b.role, "N", dayInfo);
+            const allotted = rotaList.filter(r => r.date === ds.date && r.shift === "N" && (r.coveringRole === b.role || r.designation === b.role)).length;
+            b.allotted = allotted;
+            b.shortage = Math.max(0, req - allotted);
+          });
+        }
+      }
+    });
+
+    if (rotaData.clashes) {
+      rotaData.clashes = (rotaData.dailyShortages || []).flatMap(ds => {
+        const items = [];
+        if (ds.dayShortage > 0) {
+          items.push({
+            date: ds.date,
+            day: ds.dayName,
+            shiftType: "Day",
+            required: ds.dayRequired,
+            allotted: ds.dayAllotted,
+            shortage: ds.dayShortage,
+            breakdown: ds.dayBreakdown || [],
+            message: `Understaffing on ${ds.dayName} ${ds.date} (Day Shift): ${ds.dayAllotted} / ${ds.dayRequired} staff allotted. Deficit: -${ds.dayShortage} staff.`
+          });
+        }
+        if (ds.nightShortage > 0) {
+          items.push({
+            date: ds.date,
+            day: ds.dayName,
+            shiftType: "Night",
+            required: ds.nightRequired,
+            allotted: ds.nightAllotted,
+            shortage: ds.nightShortage,
+            breakdown: ds.nightBreakdown || [],
+            message: `Understaffing on ${ds.dayName} ${ds.date} (Night Shift): ${ds.nightAllotted} / ${ds.nightRequired} staff allotted. Deficit: -${ds.nightShortage} staff.`
+          });
+        }
+        return items;
+      });
+    }
+
+    await db.execute("UPDATE saved_rotas SET rota_json = ? WHERE id = ?", [
+      JSON.stringify(rotaData),
+      saved.id
+    ]);
+
+    res.json({ success: true, rota: rotaData });
+  } catch (err) {
+    console.error("Reallocate shift error:", err);
     res.status(500).json({ error: err.message });
   }
 });
