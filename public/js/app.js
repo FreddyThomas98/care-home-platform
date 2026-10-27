@@ -464,7 +464,7 @@ async function renderRotaView() {
           </div>
         </div>
 
-        <!-- 5 KPI Summary Metric Cards (Matching Reference Image 2) -->
+        <!-- KPI Summary Metric Cards (Matching Reference Image 3) -->
         <div class="kpi-metrics-grid">
           <div class="kpi-card kpi-day-staff">
             <div class="kpi-card-icon">👥</div>
@@ -498,11 +498,11 @@ async function renderRotaView() {
             </div>
           </div>
 
-          <div class="kpi-card kpi-conflicts">
-            <div class="kpi-card-icon">☑️</div>
+          <div class="kpi-cycle-scheduler">
+            <div class="kpi-cycle-scheduler-icon">📅</div>
             <div>
-              <div class="kpi-card-value">${ruleConflictsCount}</div>
-              <div class="kpi-card-label">Rule Conflicts</div>
+              <div class="kpi-cycle-scheduler-title">4-Week Monday-to-Sunday Cycle Scheduler</div>
+              <div class="kpi-cycle-scheduler-desc">Period 10 (2026): 28 Sep – 25 Oct • 28 Days Active (${calendarDays && calendarDays.length > 0 ? calendarDays[0].dateString : '2026-09-28'} – ${calendarDays && calendarDays.length > 0 ? calendarDays[calendarDays.length-1].dateString : '2026-10-25'})</div>
             </div>
           </div>
         </div>
@@ -640,15 +640,15 @@ async function renderRotaView() {
               <table class="rota-staff-table">
                 <thead>
                   <tr>
-                    <th style="min-width:220px;">Staff Name</th>
-                    <th style="min-width:160px;">Role</th>
-                    <th style="min-width:160px;">Contract Target</th>
+                    <th style="min-width:185px;">Staff Name</th>
+                    <th style="min-width:135px;">Role</th>
+                    <th style="min-width:130px;">Contract Target</th>
                     ${days.map(d => {
                       const stat = getShiftRoleStats(d, "D", rota, currentRotaData.requirements, currentRotaData.roleHierarchy, balances);
                       const isShort = stat.totalShort > 0;
                       const isOver = stat.totalOver > 0;
                       return `
-                        <th style="text-align:center; min-width:92px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
+                        <th style="text-align:center; min-width:82px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
                           <strong style="color:#0f172a;">${d.dayName.substring(0,3)}</strong><br>
                           <small style="color:#64748b; font-weight:600;">${formatShortDate(d.dateString)}</small>
                           ${isShort && isOver ? `
@@ -792,15 +792,15 @@ async function renderRotaView() {
               <table class="night-table rota-staff-table">
                 <thead>
                   <tr>
-                    <th style="min-width:220px;">Staff Name</th>
-                    <th style="min-width:160px;">Role</th>
-                    <th style="min-width:160px;">Contract Target</th>
+                    <th style="min-width:185px;">Staff Name</th>
+                    <th style="min-width:135px;">Role</th>
+                    <th style="min-width:130px;">Contract Target</th>
                     ${days.map(d => {
                       const stat = getShiftRoleStats(d, "N", rota, currentRotaData.requirements, currentRotaData.roleHierarchy, balances);
                       const isShort = stat.totalShort > 0;
                       const isOver = stat.totalOver > 0;
                       return `
-                        <th style="text-align:center; min-width:92px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
+                        <th style="text-align:center; min-width:82px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
                           <strong style="color:#0f172a;">${d.dayName.substring(0,3)}</strong><br>
                           <small style="color:#64748b; font-weight:600;">${formatShortDate(d.dateString)}</small>
                           ${isShort && isOver ? `
@@ -1257,8 +1257,8 @@ function renderContractBalancesHtml(data) {
   });
 
   return `
-    <!-- Top KPI Stat Cards -->
-    <div class="stat-grid" style="margin-top:20px;">
+    <!-- Top KPI Stat Cards (Clean 4-Card Executive Layout) -->
+    <div class="stat-grid">
       <div class="stat-card">
         <div class="stat-card-title">🏢 Net Target Hours</div>
         <div class="stat-card-val">${totalNetTargetHours.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
@@ -1273,21 +1273,13 @@ function renderContractBalancesHtml(data) {
 
       <div class="stat-card">
         <div class="stat-card-title">🏖️ Leave Deductions</div>
-        <div class="stat-card-val" style="color:#2563eb;">${totalLeaveDedHours.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
+        <div class="stat-card-val" style="color:#0284c7;">${totalLeaveDedHours.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
         <div class="stat-card-desc">${balances.reduce((s,b)=>s+(b.leaveDays||0),0)} approved leave days deducted</div>
       </div>
 
       <div class="stat-card">
-        <div class="stat-card-title">⚖️ Carried Forward Balance</div>
-        <div class="stat-card-val" style="${totalBalanceRemaining > 0 ? 'color:#d97706;' : 'color:#059669;'}">
-          ${totalBalanceRemaining.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span>
-        </div>
-        <div class="stat-card-desc">${carriedOverStaffCount} staff carried to next period</div>
-      </div>
-
-      <div class="stat-card">
         <div class="stat-card-title">🎯 Fulfillment Rate</div>
-        <div class="stat-card-val" style="color:#0b3542;">${fulfillmentRatePct}%</div>
+        <div class="stat-card-val" style="color:#0f766e;">${fulfillmentRatePct}%</div>
         <div class="stat-card-desc">${fulfilledStaffCount} of ${totalStaff} staff 100% fulfilled</div>
       </div>
     </div>
