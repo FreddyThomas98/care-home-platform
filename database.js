@@ -39,6 +39,7 @@ if (isPostgres) {
       if (empCols.length > 0 && !empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
+      sqliteDb.exec("UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');");
     } catch (err) {}
   } catch (e) {
     // Ignore pragma errors if in memory or unsupported
@@ -144,6 +145,7 @@ async function init() {
 
       ALTER TABLE role_hierarchy ADD COLUMN IF NOT EXISTS days_per_week INTEGER NOT NULL DEFAULT 7;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS floor VARCHAR(100) DEFAULT '';
+      UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');
       ALTER TABLE preferences ALTER COLUMN target_day TYPE VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS leave_records (
@@ -331,6 +333,7 @@ async function init() {
       if (!empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
+      sqliteDb.exec("UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');");
     } catch (e) {
       console.warn("SQLite schema / migration check:", e.message);
     }

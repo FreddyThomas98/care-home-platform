@@ -9,7 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "carehome_super_secret_jwt_key_2026_dev";
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 // JWT Authentication Middleware
@@ -594,7 +595,14 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
       ]);
       return res.json(result);
     }
-    res.json(JSON.parse(saved.rota_json));
+    const rotaData = JSON.parse(saved.rota_json);
+    if (!rotaData.requirements) {
+      rotaData.requirements = await db.queryAll("SELECT * FROM requirements");
+    }
+    if (!rotaData.roleHierarchy) {
+      rotaData.roleHierarchy = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+    }
+    res.json(rotaData);
   } catch (err) {
     console.error("Fetch latest rota error:", err);
     res.status(500).json({ error: err.message });
@@ -619,6 +627,9 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
     // Load requirements and role hierarchy to accurately evaluate daily quotas
     const reqList = await db.queryAll("SELECT * FROM requirements");
     const hList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+    rotaData.requirements = reqList;
+    rotaData.roleHierarchy = hList;
+
     const roleHierarchyMap = {};
     const roleDaysPerWeek = {};
     hList.forEach(h => {
@@ -651,24 +662,44 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
       ds.nightShortage = Math.max(0, ds.nightRequired - nAllotted);
       ds.nightOverstaffed = Math.max(0, nAllotted - ds.nightRequired);
 
-      if (ds.dayBreakdown) {
-        ds.dayBreakdown.forEach(b => {
-          const req = getReqQuota(b.role, "D", dayInfo);
-          const allotted = rota.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR" && (r.coveringRole === b.role || r.designation === b.role)).length;
-          b.allotted = allotted;
-          b.shortage = Math.max(0, req - allotted);
-          b.overstaffed = Math.max(0, allotted - req);
-        });
-      }
-      if (ds.nightBreakdown) {
-        ds.nightBreakdown.forEach(b => {
-          const req = getReqQuota(b.role, "N", dayInfo);
-          const allotted = rota.filter(r => r.date === ds.date && r.shift === "N" && (r.coveringRole === b.role || r.designation === b.role)).length;
-          b.allotted = allotted;
-          b.shortage = Math.max(0, req - allotted);
-          b.overstaffed = Math.max(0, allotted - req);
-        });
-      }
+      // Rebuild role-by-role breakdowns for both shortages and overstaffing
+      const dayBreakdown = [];
+      reqList.forEach(r => {
+        const req = getReqQuota(r.role_name, "D", dayInfo);
+        const allotted = rota.filter(item => item.date === ds.date && item.shift === "D" && item.status !== "TR" && (item.coveringRole === r.role_name || item.designation === r.role_name)).length;
+        const short = Math.max(0, req - allotted);
+        const over = Math.max(0, allotted - req);
+        if (short > 0 || over > 0) {
+          dayBreakdown.push({
+            role: r.role_name,
+            required: req,
+            allotted: allotted,
+            shortage: short,
+            overstaffed: over,
+            reasons: []
+          });
+        }
+      });
+      ds.dayBreakdown = dayBreakdown;
+
+      const nightBreakdown = [];
+      reqList.forEach(r => {
+        const req = getReqQuota(r.role_name, "N", dayInfo);
+        const allotted = rota.filter(item => item.date === ds.date && item.shift === "N" && (item.coveringRole === r.role_name || item.designation === r.role_name)).length;
+        const short = Math.max(0, req - allotted);
+        const over = Math.max(0, allotted - req);
+        if (short > 0 || over > 0) {
+          nightBreakdown.push({
+            role: r.role_name,
+            required: req,
+            allotted: allotted,
+            shortage: short,
+            overstaffed: over,
+            reasons: []
+          });
+        }
+      });
+      ds.nightBreakdown = nightBreakdown;
     });
 
     // Recalculate balances

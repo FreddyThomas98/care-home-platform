@@ -1876,17 +1876,24 @@ async function saveShortageAdjustments() {
   }
 
   try {
-    const token = localStorage.getItem("token");
+    const token = getToken() || localStorage.getItem("token");
     const res = await fetch("/api/rota/save-adjustments", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
+        ...(token ? { "Authorization": `Bearer ${token}` } : {})
       },
       body: JSON.stringify({ rota: shortageWorkingRota })
     });
 
-    const data = await res.json();
+    const resText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(resText);
+    } catch (parseErr) {
+      throw new Error(`Server returned non-JSON response (${res.status} ${res.statusText}): ${resText.substring(0, 150)}`);
+    }
+
     if (!res.ok) {
       alert("Failed to save changes: " + (data.error || "Unknown error"));
       if (btn) {
@@ -1970,63 +1977,109 @@ function renderShortageManagementView() {
   const days = week ? week.days : [];
   const calendarDays = currentRotaData.calendarDays || [];
   const balances = currentRotaData.balances || [];
-  const dailyRequiredTotals = currentRotaData.dailyRequiredTotals || { day: 16, night: 10 };
+  const reqList = (currentRotaData.requirements && currentRotaData.requirements.length > 0)
+    ? currentRotaData.requirements
+    : [
+        { role_name: 'Dy. Manager', day_required: 1, night_required: 0 },
+        { role_name: 'Advanced Team Leader', day_required: 1, night_required: 0 },
+        { role_name: 'Clinical Lead', day_required: 1, night_required: 0 },
+        { role_name: 'Staff Nurse', day_required: 3, night_required: 3 },
+        { role_name: 'Senior Carer', day_required: 3, night_required: 2 },
+        { role_name: 'Team Leader', day_required: 1, night_required: 0 },
+        { role_name: 'Carer', day_required: 10, night_required: 7 },
+        { role_name: 'Wellbeing Staff', day_required: 2, night_required: 0 },
+        { role_name: 'Hostes', day_required: 3, night_required: 0 },
+        { role_name: 'Maintance Staff', day_required: 2, night_required: 0 },
+        { role_name: 'Physiotherapist', day_required: 1, night_required: 0 }
+      ];
 
-  // Calculate live daily counts for the 7 days in this week
+  const hList = currentRotaData.roleHierarchy || [];
+  const roleDaysMap = {};
+  hList.forEach(h => {
+    roleDaysMap[h.required_role] = parseInt(h.days_per_week, 10) || 7;
+  });
+
+  // Calculate live role-wise shortage and overstaffing for each day in this week
   const dayStats = days.map(d => {
-    const dAllotted = workingRota.filter(r => r.date === d.dateString && r.shift === "D" && r.status !== "TR").length;
-    const nAllotted = workingRota.filter(r => r.date === d.dateString && r.shift === "N").length;
+    const dIdx = (d.dayOfWeek + 6) % 7; // Mon=0, ..., Sun=6
 
-    const reqD = dailyRequiredTotals.day;
-    const reqN = dailyRequiredTotals.night;
+    const shortRoles = [];
+    const overRoles = [];
 
-    const shortD = Math.max(0, reqD - dAllotted);
-    const overD = Math.max(0, dAllotted - reqD);
-    const shortN = Math.max(0, reqN - nAllotted);
-    const overN = Math.max(0, nAllotted - reqN);
+    // Collect all unique roles: from requirements and balances
+    const evaluatedRoleNames = [...new Set([
+      ...reqList.map(r => r.role_name),
+      ...balances.map(b => b.designation)
+    ])];
 
-    let effectiveShort = 0;
-    let effectiveOver = 0;
-    let effectiveAllotted = 0;
-    let effectiveReq = 0;
+    evaluatedRoleNames.forEach(roleName => {
+      const reqObj = reqList.find(r => r.role_name === roleName);
+      const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
+      const isDayActive = dIdx < maxDays;
 
-    if (currentShortageShift === "D") {
-      effectiveShort = shortD;
-      effectiveOver = overD;
-      effectiveAllotted = dAllotted;
-      effectiveReq = reqD;
-    } else if (currentShortageShift === "N") {
-      effectiveShort = shortN;
-      effectiveOver = overN;
-      effectiveAllotted = nAllotted;
-      effectiveReq = reqN;
-    } else {
-      effectiveShort = shortD + shortN;
-      effectiveOver = overD + overN;
-      effectiveAllotted = dAllotted + nAllotted;
-      effectiveReq = reqD + reqN;
-    }
+      const reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
+      const reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
+
+      const allottedD = workingRota.filter(r =>
+        r.date === d.dateString &&
+        r.shift === "D" &&
+        r.status !== "TR" &&
+        (r.coveringRole === roleName || r.designation === roleName)
+      ).length;
+
+      const allottedN = workingRota.filter(r =>
+        r.date === d.dateString &&
+        r.shift === "N" &&
+        (r.coveringRole === roleName || r.designation === roleName)
+      ).length;
+
+      let rShort = 0;
+      let rOver = 0;
+
+      if (currentShortageShift === "D") {
+        rShort = Math.max(0, reqD - allottedD);
+        rOver = Math.max(0, allottedD - reqD);
+      } else if (currentShortageShift === "N") {
+        rShort = Math.max(0, reqN - allottedN);
+        rOver = Math.max(0, allottedN - reqN);
+      } else {
+        // All shifts: sum shift-specific shortages and overstaffing
+        const sD = Math.max(0, reqD - allottedD);
+        const oD = Math.max(0, allottedD - reqD);
+        const sN = Math.max(0, reqN - allottedN);
+        const oN = Math.max(0, allottedN - reqN);
+        rShort = sD + sN;
+        rOver = oD + oN;
+      }
+
+      if (rShort > 0) {
+        shortRoles.push({ role: roleName, shortage: rShort });
+      }
+      if (rOver > 0) {
+        overRoles.push({ role: roleName, overstaffed: rOver });
+      }
+    });
+
+    const totalShort = shortRoles.reduce((sum, r) => sum + r.shortage, 0);
+    const totalOver = overRoles.reduce((sum, r) => sum + r.overstaffed, 0);
+
+    const shortSummary = shortRoles.map(r => `-${r.shortage} ${r.role}`).join(', ');
+    const overSummary = overRoles.map(r => `+${r.overstaffed} ${r.role}`).join(', ');
 
     return {
       date: d.dateString,
       dayName: d.dayName,
-      dAllotted,
-      reqD,
-      shortD,
-      overD,
-      nAllotted,
-      reqN,
-      shortN,
-      overN,
-      effectiveShort,
-      effectiveOver,
-      effectiveAllotted,
-      effectiveReq
+      shortRoles,
+      overRoles,
+      totalShort,
+      totalOver,
+      shortSummary,
+      overSummary
     };
   });
 
-  const totalWeekShort = dayStats.reduce((sum, s) => sum + s.effectiveShort, 0);
-  const totalWeekOver = dayStats.reduce((sum, s) => sum + s.effectiveOver, 0);
+  const totalWeekShort = dayStats.reduce((sum, s) => sum + s.totalShort, 0);
+  const totalWeekOver = dayStats.reduce((sum, s) => sum + s.totalOver, 0);
 
   // Filter staff list
   const allRoles = [...new Set(balances.map(b => b.designation))].sort();
@@ -2144,7 +2197,7 @@ function renderShortageManagementView() {
               const stat = dayStats[idx];
               const isWeekend = d.isWeekend;
               return `
-                <th style="text-align:center; min-width:96px; padding:8px 4px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'};">
+                <th style="text-align:center; min-width:110px; padding:6px 3px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'}; vertical-align:top;">
                   <div style="font-size:12px; font-weight:800; color:#0f172a;">
                     ${d.dayName.substring(0, 3)}
                   </div>
@@ -2152,23 +2205,35 @@ function renderShortageManagementView() {
                     ${formatShortDate(d.dateString)}
                   </div>
 
-                  <!-- Freezed Shortage / Overstaffing Badges Row -->
-                  ${stat.effectiveShort > 0 && stat.effectiveOver > 0 ? `
-                    <div style="display:flex; justify-content:center; gap:3px; flex-wrap:wrap;">
-                      <span class="badge-shortage" title="Shortage on this day">Short: -${stat.effectiveShort}</span>
-                      <span class="badge-overstaffed" title="Overstaffed on this day">Over: +${stat.effectiveOver}</span>
+                  <!-- Freezed Role-Wise Shortage & Overstaffing Badges Row -->
+                  ${stat.totalShort > 0 && stat.totalOver > 0 ? `
+                    <div style="display:flex; flex-direction:column; gap:2px; align-items:center;">
+                      <div style="display:flex; gap:2px; justify-content:center; flex-wrap:wrap;">
+                        <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${stat.totalShort}</span>
+                        <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${stat.totalOver}</span>
+                      </div>
+                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
+                        ${stat.shortRoles.map(r => `<div style="color:#b91c1c; font-weight:700;">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
+                        ${stat.overRoles.map(r => `<div style="color:#2563eb; font-weight:700;">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                      </div>
                     </div>
-                  ` : stat.effectiveShort > 0 ? `
-                    <div>
-                      <span class="badge-shortage" title="Shortage: -${stat.effectiveShort} staff needed">Short: -${stat.effectiveShort}</span>
+                  ` : stat.totalShort > 0 ? `
+                    <div style="display:flex; flex-direction:column; gap:2px; align-items:center;">
+                      <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${stat.totalShort}</span>
+                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
+                        ${stat.shortRoles.map(r => `<div style="color:#b91c1c; font-weight:700;">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
+                      </div>
                     </div>
-                  ` : stat.effectiveOver > 0 ? `
-                    <div>
-                      <span class="badge-overstaffed" title="Overstaffed: +${stat.effectiveOver} extra staff">Over: +${stat.effectiveOver}</span>
+                  ` : stat.totalOver > 0 ? `
+                    <div style="display:flex; flex-direction:column; gap:2px; align-items:center;">
+                      <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${stat.totalOver}</span>
+                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
+                        ${stat.overRoles.map(r => `<div style="color:#2563eb; font-weight:700;">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                      </div>
                     </div>
                   ` : `
                     <div>
-                      <span class="badge-met" title="Full quota met">✅ Met</span>
+                      <span class="badge-met" title="All role quotas met">✅ Met</span>
                     </div>
                   `}
                 </th>

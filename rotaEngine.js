@@ -908,8 +908,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
       const allottedCount = allottedStaff.length;
       const shortCount = Math.max(0, reqCount - allottedCount);
+      const overCount = Math.max(0, allottedCount - reqCount);
 
-      if (shortCount > 0) {
+      if (shortCount > 0 || overCount > 0) {
         const reasons = [];
         // Inspect all active Day staff with this designation (omit night staff completely)
         const pool = Object.values(empState).filter(st => st.staffType === "D" && st.designation === role);
@@ -1047,8 +1048,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
       const allottedCount = allottedStaff.length;
       const shortCount = Math.max(0, reqCount - allottedCount);
+      const overCount = Math.max(0, allottedCount - reqCount);
 
-      if (shortCount > 0) {
+      if (shortCount > 0 || overCount > 0) {
         const reasons = [];
         // Inspect all active Night staff with this designation (omit day staff completely)
         const pool = Object.values(empState).filter(st => st.staffType === "N" && st.designation === role);
@@ -1356,7 +1358,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     warnings: warnings,
     clashes: clashes,
     ruleConflicts: ruleConflicts,
-    rolePriorityMap: rolePriorityMap
+    rolePriorityMap: rolePriorityMap,
+    requirements: requirementsList,
+    roleHierarchy: hierarchyList
   };
 }
 

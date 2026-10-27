@@ -26,7 +26,8 @@
       "shift_hours": 10,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP002",
@@ -36,7 +37,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP003",
@@ -46,7 +48,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP004",
@@ -56,7 +59,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP005",
@@ -66,7 +70,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP006",
@@ -76,7 +81,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP007",
@@ -86,7 +92,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP008",
@@ -96,7 +103,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP009",
@@ -106,7 +114,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP010",
@@ -116,7 +125,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP011",
@@ -126,7 +136,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP012",
@@ -136,7 +147,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP013",
@@ -146,7 +158,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP014",
@@ -156,7 +169,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP015",
@@ -166,7 +180,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP016",
@@ -176,7 +191,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP017",
@@ -186,7 +202,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP018",
@@ -196,7 +213,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP019",
@@ -206,7 +224,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP020",
@@ -216,7 +235,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP021",
@@ -226,7 +246,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP022",
@@ -236,7 +257,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP023",
@@ -246,7 +268,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP024",
@@ -256,7 +279,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP025",
@@ -266,7 +290,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP026",
@@ -276,7 +301,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP027",
@@ -286,7 +312,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP028",
@@ -296,7 +323,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP029",
@@ -306,7 +334,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP030",
@@ -316,7 +345,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP031",
@@ -326,7 +356,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP032",
@@ -336,7 +367,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 0,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP033",
@@ -346,7 +378,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP034",
@@ -356,7 +389,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP035",
@@ -366,7 +400,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP036",
@@ -376,7 +411,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP037",
@@ -386,7 +422,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP038",
@@ -396,7 +433,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP039",
@@ -406,7 +444,8 @@
       "shift_hours": 11,
       "staff_type": "D",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": "Ground Floor"
     },
     {
       "id": "EMP040",
@@ -416,7 +455,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP041",
@@ -426,7 +466,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP042",
@@ -436,7 +477,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP043",
@@ -446,7 +488,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP044",
@@ -456,7 +499,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP045",
@@ -466,7 +510,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP046",
@@ -476,7 +521,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP047",
@@ -486,7 +532,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP048",
@@ -496,7 +543,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP049",
@@ -506,7 +554,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP050",
@@ -516,7 +565,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP051",
@@ -526,7 +576,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP052",
@@ -536,7 +587,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP053",
@@ -546,7 +598,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP054",
@@ -556,7 +609,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP055",
@@ -566,7 +620,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP056",
@@ -576,7 +631,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP057",
@@ -586,7 +642,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP058",
@@ -596,7 +653,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP059",
@@ -606,7 +664,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP060",
@@ -616,7 +675,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP061",
@@ -626,7 +686,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     },
     {
       "id": "EMP062",
@@ -636,7 +697,8 @@
       "shift_hours": 11,
       "staff_type": "N",
       "active": 1,
-      "created_at": "2026-10-23 09:09:06"
+      "created_at": "2026-10-23 09:09:06",
+      "floor": ""
     }
   ],
   "requirements": [
