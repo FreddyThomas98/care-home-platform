@@ -117,30 +117,30 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   const empState = {};
 
   employees.forEach(emp => {
-    const shiftHours = emp.shift_hours || 11.0;
-    const contractHours = emp.contract_hours || 0;
+    const shiftHours = parseFloat(emp.shift_hours) || 11.0;
+    const contractHours = parseFloat(emp.contract_hours) || 0;
     const isRound = (contractHours % shiftHours === 0);
 
     // Calculate weekly shift targets:
     // Round hours (44h, 33h, 22h, 11h) -> strict same shifts every week
-    // Fractional hours (38.5h) -> alternating 4 / 3 / 4 / 3 shifts
+    // Fractional / Non-round hours -> strictly capped so shifts * shiftHours <= monthlyContractHours (NO OVERTIME)
     const weeklyTargets = [];
+    const monthlyContractHours = contractHours * weeks.length;
+    const maxAllowedShifts = Math.floor(monthlyContractHours / shiftHours);
+
     if (isRound) {
       const shiftsPerWeek = Math.round(contractHours / shiftHours);
       for (let w = 0; w < weeks.length; w++) {
         weeklyTargets.push(shiftsPerWeek);
       }
     } else {
-      // 38.5h / 11h = 3.5 shifts/week -> 14 shifts per 4-week cycle
-      let bal = 0;
+      // Distribute maxAllowedShifts across the weeks evenly without exceeding monthly contract
+      let remaining = maxAllowedShifts;
       for (let w = 0; w < weeks.length; w++) {
-        const needed = contractHours + bal;
-        let shifts = Math.floor(needed / shiftHours);
-        if (w === weeks.length - 1) {
-          shifts = Math.round(needed / shiftHours);
-        }
+        const weeksLeft = weeks.length - w;
+        const shifts = Math.round(remaining / weeksLeft);
         weeklyTargets.push(shifts);
-        bal = needed - (shifts * shiftHours);
+        remaining -= shifts;
       }
     }
 
@@ -181,12 +181,16 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   Object.values(roleGroups).forEach(group => {
     group.forEach((st, idx) => {
       st.weekendCohort = idx % 2 === 0 ? "A" : "B";
-      // For fractional 38.5h and 40h workers, align targets properly with cohorts
+      // For fractional 38.5h, 40h, and 15h workers, align targets properly with cohorts
       if (!st.isRound) {
         if (st.contractHours === 38.5) {
           st.weeklyTargets = st.weekendCohort === "A" ? [4, 3, 4, 3] : [3, 4, 3, 4];
         } else if (st.contractHours === 40) {
-          st.weeklyTargets = st.weekendCohort === "A" ? [4, 4, 3, 4] : [4, 3, 4, 4];
+          // 40h/wk * 4 = 160h. Capped at 14 shifts (154h) to never exceed 160h contract
+          st.weeklyTargets = st.weekendCohort === "A" ? [4, 3, 4, 3] : [3, 4, 3, 4];
+        } else if (st.contractHours === 15) {
+          // 15h/wk * 4 = 60h. Capped at 5 shifts (55h) to never exceed 60h contract
+          st.weeklyTargets = st.weekendCohort === "A" ? [1, 1, 2, 1] : [1, 2, 1, 1];
         }
         st.totalMonthlyTargetShifts = st.weeklyTargets.reduce((a, b) => a + b, 0);
       }
@@ -1103,9 +1107,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
-  // 8. Compile Balances & Final Flat Rota Table
+  // 8. Compile Balances, Contract Shortages Diagnosis & Final Flat Rota Table
   const flatRota = [];
   const balances = [];
+  const contractShortages = [];
 
   Object.values(empState).forEach(st => {
     let floorShifts = 0;
@@ -1132,11 +1137,14 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
     });
 
-    const baseContractHours = st.totalMonthlyTargetShifts * st.shiftHours;
-    const leaveDedHours = leaveShifts * st.shiftHours;
-    const netTargetHours = Math.max(0, baseContractHours - leaveDedHours);
-    const floorHoursWorked = floorShifts * st.shiftHours;
-    const balanceRemaining = Math.max(0, netTargetHours - floorHoursWorked);
+    const nominalMonthlyContractHours = Math.round(st.contractHours * weeks.length * 10) / 10;
+    const leaveDedHours = Math.round(leaveShifts * st.shiftHours * 10) / 10;
+    const netContractHours = Math.max(0, Math.round((nominalMonthlyContractHours - leaveDedHours) * 10) / 10);
+    const scheduledTargetHours = Math.round(st.totalMonthlyTargetShifts * st.shiftHours * 10) / 10;
+    const floorHoursWorked = Math.round(floorShifts * st.shiftHours * 10) / 10;
+    
+    // Shortage against nominal net contract hours:
+    const contractShortageHours = Math.max(0, Math.round((netContractHours - floorHoursWorked) * 10) / 10);
 
     balances.push({
       employeeId: st.id,
@@ -1147,16 +1155,72 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       shiftHours: st.shiftHours,
       isRound: st.isRound,
       weeklyTargets: st.weeklyTargets,
-      baseContractHours: baseContractHours,
+      baseContractHours: nominalMonthlyContractHours,
       leaveDays: leaveShifts,
       leaveDedHours: leaveDedHours,
-      netTargetHours: netTargetHours,
-      netTargetShifts: Math.round(netTargetHours / (st.shiftHours || 11)),
+      netTargetHours: netContractHours,
+      scheduledTargetHours: scheduledTargetHours,
+      netTargetShifts: st.totalMonthlyTargetShifts,
       floorShiftsWorked: floorShifts,
       floorHoursWorked: floorHoursWorked,
-      balanceRemaining: Math.round(balanceRemaining * 10) / 10,
-      contractStatus: balanceRemaining === 0 ? "Fulfilled ✅" : `+${balanceRemaining} hrs (Pending)`
+      balanceRemaining: contractShortageHours,
+      contractStatus: contractShortageHours === 0 ? "Fulfilled ✅" : `-${contractShortageHours} hrs (Shortage)`
     });
+
+    // Detailed Diagnosis for any employee with an unfulfilled contract hour shortage
+    if (contractShortageHours > 0) {
+      let category = "Floor Quota Cap";
+      let badgeColor = "#dc2626";
+      let badgeBg = "#fee2e2";
+      let reason = "";
+      let tip = "";
+
+      // Check if the shortage is due to daily shift indivisibility (contract cannot divide evenly into shift_hours without exceeding)
+      const isDivisibilityIssue = !st.isRound && (floorHoursWorked === scheduledTargetHours) && (contractShortageHours > 0);
+
+      if (isDivisibilityIssue) {
+        category = "Divisibility & Rounding";
+        badgeColor = "#d97706";
+        badgeBg = "#fef3c7";
+        const nextShiftHours = Math.round((floorHoursWorked + st.shiftHours) * 10) / 10;
+        const potentialOvertime = Math.round((nextShiftHours - netContractHours) * 10) / 10;
+        reason = `Shift-Hour Divisibility: ${st.contractHours}h/wk contract (${nominalMonthlyContractHours}h monthly) cannot be divided evenly into ${st.shiftHours}h daily shifts. The engine allocated ${floorShifts} shifts (${floorHoursWorked}h) to strictly enforce the zero-overtime rule (${floorShifts + 1} shifts = ${nextShiftHours}h would cause +${potentialOvertime}h overtime).`;
+        const suggestedShiftHours = Math.round((st.contractHours / Math.round(st.contractHours / 8)) * 10) / 10;
+        tip = `If this role works shorter shifts than floor carers (e.g., set Shift Duration to ${suggestedShiftHours}h in Staff Management), contract hours will tally to 100% with 0h deficit, or log ${contractShortageHours}h as an unworked contract balance.`;
+      } else if (leaveShifts > 0 && floorShifts < st.totalMonthlyTargetShifts) {
+        category = "Leave & Availability";
+        badgeColor = "#2563eb";
+        badgeBg = "#dbeafe";
+        reason = `Approved Leave / Personal Preferences: Scheduled leave (${leaveShifts} days) or personal unavailability restricted the candidate working dates available to complete contracted shifts.`;
+        tip = `Review leave coverage or offer voluntary shift swap on other available days.`;
+      } else {
+        category = "Zero Overstaffing Limit";
+        badgeColor = "#dc2626";
+        badgeBg = "#fee2e2";
+        reason = `Floor Quota Met (Zero Overstaffing): Daily required staffing quota for ${st.designation} was already 100% met on all eligible days. Additional shifts were blocked to prevent unnecessary overstaffing.`;
+        tip = `Review daily required quotas for ${st.designation} in Staff Requirements, or enable cross-role substitution in Role Hierarchy.`;
+      }
+
+      contractShortages.push({
+        employeeId: st.id,
+        employeeName: st.name,
+        designation: st.designation,
+        staffType: st.staffType,
+        contractWeeklyHours: st.contractHours,
+        shiftHours: st.shiftHours,
+        nominalContractHours: nominalMonthlyContractHours,
+        netContractHours: netContractHours,
+        scheduledTargetHours: scheduledTargetHours,
+        floorShiftsWorked: floorShifts,
+        floorHoursWorked: floorHoursWorked,
+        shortageHours: contractShortageHours,
+        category: category,
+        badgeColor: badgeColor,
+        badgeBg: badgeBg,
+        reason: reason,
+        recommendation: tip
+      });
+    }
   });
 
   return {
@@ -1166,6 +1230,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     calendarDays: calendarDays,
     dailyRequiredTotals: { day: dailyRequiredDayTotal, night: dailyRequiredNightTotal },
     dailyShortages: dailyShortages,
+    contractShortages: contractShortages,
     balances: balances,
     rota: flatRota,
     warnings: warnings,

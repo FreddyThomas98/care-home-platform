@@ -15,6 +15,9 @@ let currentConflictWeek = "all";
 let currentConflictShift = "all";
 let currentConflictSearch = "";
 let currentConflictOnlyShortages = true;
+let currentConflictTab = "contract"; // "contract" | "daily"
+let currentContractShortageCategory = "all";
+let currentContractShortageSearch = "";
 
 // Token storage helpers
 function getToken() {
@@ -277,10 +280,15 @@ async function renderRotaView() {
 
           <div>
             <button class="btn btn-secondary" onclick="openRuleConflictsModal()" style="border-color:#f59e0b; background:#fffbeb; color:#b45309; font-weight:700; display:inline-flex; align-items:center; gap:8px;">
-              <span>📅</span> Daily Shortages & Conflicting Rules
-              <span style="background:#dc2626; color:#ffffff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:800;">
+              <span>⚖️</span> Daily Shortages & Conflicting Rules
+              <span style="background:#dc2626; color:#ffffff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:800;" title="Daily floor quota shortages">
                 ${(currentRotaData.clashes || []).length} Shortages
               </span>
+              ${(currentRotaData.contractShortages && currentRotaData.contractShortages.length > 0) ? `
+                <span style="background:#d97706; color:#ffffff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:800;" title="Staff members with unfulfilled contract hours">
+                  ${currentRotaData.contractShortages.length} Contract Deficits
+                </span>
+              ` : ''}
             </button>
           </div>
         </div>
@@ -681,10 +689,10 @@ function renderMonthlyMatrixHtml(data) {
                   <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px;">
                     ${isDayType ? '<span style="color:#d97706; font-weight:700;">☀️ Day</span>' : '<span style="color:#4f46e5; font-weight:700;">🌙 Ngt</span>'}
                   </td>
-                  <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px; font-weight:600; color:#475569;">
+                  <td style="text-align:center; padding:4px; border-right:1px solid #e2e8f0; font-size:11px; font-weight:600; color:#475569;" title="Contract Net Target: ${st.netTargetHours}h">
                     ${st.netTargetHours}h
                   </td>
-                  <td style="text-align:center; padding:4px; border-right:2px solid #0b3542; font-size:11px; font-weight:700; ${st.floorHoursWorked < st.netTargetHours ? 'color:#dc2626;' : 'color:#15803d;'}">
+                  <td style="text-align:center; padding:4px; border-right:2px solid #0b3542; font-size:11px; font-weight:700; ${st.floorHoursWorked < st.netTargetHours ? 'color:#d97706;' : 'color:#15803d;'}" title="${st.floorHoursWorked < st.netTargetHours ? `Shortage: -${Math.round((st.netTargetHours - st.floorHoursWorked)*10)/10}h (click Daily Shortages to view diagnosis)` : 'Contract Hours Fulfilled'}">
                     ${st.floorHoursWorked}h
                   </td>
 
@@ -899,8 +907,8 @@ function renderContractBalancesHtml(data) {
                   <td style="text-align:center; font-weight:700; ${isFulfilled ? 'color:#15803d;' : 'color:#b91c1c;'}">
                     ${b.floorHoursWorked}h <span style="font-size:11px; color:#64748b;">(${b.floorShiftsWorked} shf)</span>
                   </td>
-                  <td style="text-align:center; font-weight:800; ${isFulfilled ? 'color:#15803d;' : 'color:#d97706;'}">
-                    ${isFulfilled ? '0h' : `+${b.balanceRemaining}h`}
+                  <td style="text-align:center; font-weight:800; ${isFulfilled ? 'color:#15803d;' : 'color:#b91c1c;'}">
+                    ${isFulfilled ? '0h' : `-${b.balanceRemaining}h`}
                   </td>
                   <td>
                     <div style="display:flex; align-items:center; gap:8px;">
@@ -916,8 +924,8 @@ function renderContractBalancesHtml(data) {
                         Fulfilled ✅
                       </span>
                     ` : `
-                      <span class="badge" style="background:#fef3c7; color:#b45309; font-weight:700; padding:3px 8px; border-radius:4px; font-size:11px;" title="Carried forward to next period per rule">
-                        Carried +${b.balanceRemaining}h ⚖️
+                      <span class="badge" style="background:#fef3c7; color:#b45309; font-weight:700; padding:4px 10px; border-radius:6px; font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; border:1px solid #fde68a;" onclick="openRuleConflictsModal(null, 'contract')" title="Click to view full shortage diagnosis">
+                        -${b.balanceRemaining}h Deficit 🔍
                       </span>
                     `}
                   </td>
@@ -1093,11 +1101,29 @@ function openClashesModal() {
 
 
 
-function openRuleConflictsModal(dateToSelect) {
-  if (dateToSelect && typeof dateToSelect === "string") {
+function openRuleConflictsModal(dateToSelect, initialTab) {
+  if (initialTab) {
+    currentConflictTab = initialTab;
+  } else if (dateToSelect && typeof dateToSelect === "string") {
     currentConflictSearch = dateToSelect;
     currentConflictOnlyShortages = false;
+    currentConflictTab = "daily";
   }
+  renderRuleConflictsModal();
+}
+
+function setConflictTab(tab) {
+  currentConflictTab = tab;
+  renderRuleConflictsModal();
+}
+
+function setContractShortageCategory(cat) {
+  currentContractShortageCategory = cat;
+  renderRuleConflictsModal();
+}
+
+function updateContractShortageSearch(val) {
+  currentContractShortageSearch = val;
   renderRuleConflictsModal();
 }
 
@@ -1123,9 +1149,26 @@ function updateConflictSearch(val) {
 
 function renderRuleConflictsModal() {
   if (!currentRotaData) return;
-  const { calendarDays, dailyShortages, dailyRequiredTotals } = currentRotaData;
+  const { calendarDays, dailyShortages, dailyRequiredTotals, contractShortages } = currentRotaData;
   const days = calendarDays || [];
   const shortagesList = dailyShortages || [];
+  const cShortages = contractShortages || [];
+
+  // Filter contract shortages
+  const filteredContractShortages = cShortages.filter(c => {
+    if (currentContractShortageCategory !== "all" && c.category !== currentContractShortageCategory) return false;
+    if (currentContractShortageSearch.trim()) {
+      const q = currentContractShortageSearch.trim().toLowerCase();
+      const matchName = c.employeeName.toLowerCase().includes(q);
+      const matchRole = c.designation.toLowerCase().includes(q);
+      const matchReason = c.reason.toLowerCase().includes(q);
+      if (!matchName && !matchRole && !matchReason) return false;
+    }
+    return true;
+  });
+
+  const totalContractShortagesCount = cShortages.length;
+  const totalContractShortageHours = Math.round(cShortages.reduce((sum, c) => sum + (c.shortageHours || 0), 0) * 10) / 10;
 
   // Build entries for every day and shift
   const entries = [];
@@ -1190,241 +1233,365 @@ function renderRuleConflictsModal() {
 
   const content = `
     <div class="modal-overlay" onclick="closeModal(event)">
-      <div class="modal-card" style="max-width:960px; width:95vw;" onclick="event.stopPropagation()">
+      <div class="modal-card" style="max-width:980px; width:95vw;" onclick="event.stopPropagation()">
         <div class="modal-header" style="background:#fffbeb; border-bottom:2px solid #fde68a;">
           <div>
             <h3 style="color:#92400e; margin:0; font-size:18px; display:flex; align-items:center; gap:8px;">
-              <span>📅</span> Daily Shortages & Conflicting Rules Guide
+              <span>⚖️</span> Staff Shortages & Conflicting Rules Diagnosis
             </h3>
             <div style="font-size:12px; color:#78350f; margin-top:4px;">
-              Date-by-date breakdown of staffing shortages and the exact safety, rest, or leave rules active on each date.
+              Comprehensive audit of unfulfilled contract hours, non-round shift divisibility, and date-by-date staffing limits.
             </div>
           </div>
           <button class="btn btn-secondary" onclick="closeModal()" style="padding:4px 10px; font-weight:bold;">✕</button>
         </div>
 
         <div class="modal-body" style="padding:16px 20px;">
-          <!-- Filter Controls -->
-          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <!-- Week Pills -->
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <span style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-right:4px;">Week:</span>
-              <button class="btn ${currentConflictWeek === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('all')">
-                All 4 Weeks
+          <!-- Top Sub-view Navigation Tabs -->
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e2e8f0; margin-bottom:14px; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+            <div style="display:flex; gap:8px;">
+              <button class="btn ${currentConflictTab === 'contract' ? 'btn-primary' : 'btn-secondary'}" style="padding:6px 14px; font-size:13px; font-weight:700; display:inline-flex; align-items:center; gap:6px;" onclick="setConflictTab('contract')">
+                <span>👤</span> Contract Hour Shortages
+                <span style="background:${currentConflictTab === 'contract' ? '#ffffff' : '#d97706'}; color:${currentConflictTab === 'contract' ? '#0284c7' : '#ffffff'}; border-radius:10px; padding:1px 7px; font-size:11px; font-weight:800;">
+                  ${totalContractShortagesCount}
+                </span>
               </button>
-              <button class="btn ${currentConflictWeek === '1' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('1')">
-                Week 1
-              </button>
-              <button class="btn ${currentConflictWeek === '2' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('2')">
-                Week 2
-              </button>
-              <button class="btn ${currentConflictWeek === '3' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('3')">
-                Week 3
-              </button>
-              <button class="btn ${currentConflictWeek === '4' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('4')">
-                Week 4
+              <button class="btn ${currentConflictTab === 'daily' ? 'btn-primary' : 'btn-secondary'}" style="padding:6px 14px; font-size:13px; font-weight:700; display:inline-flex; align-items:center; gap:6px;" onclick="setConflictTab('daily')">
+                <span>📅</span> Daily Floor Quota Shortages
+                <span style="background:${currentConflictTab === 'daily' ? '#ffffff' : '#dc2626'}; color:${currentConflictTab === 'daily' ? '#0284c7' : '#ffffff'}; border-radius:10px; padding:1px 7px; font-size:11px; font-weight:800;">
+                  ${totalShortageShifts}
+                </span>
               </button>
             </div>
-
-            <!-- Shift & Checkbox Filters -->
-            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-              <div style="display:flex; gap:4px;">
-                <button class="btn ${currentConflictShift === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('all')">
-                  All Shifts
-                </button>
-                <button class="btn ${currentConflictShift === 'D' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('D')">
-                  ☀️ Day
-                </button>
-                <button class="btn ${currentConflictShift === 'N' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('N')">
-                  🌙 Night
-                </button>
-              </div>
-
-              <label style="font-size:12px; font-weight:600; color:#334155; display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin:0;">
-                <input type="checkbox" ${currentConflictOnlyShortages ? 'checked' : ''} onchange="toggleConflictOnlyShortages()">
-                Only Dates with Shortages (${totalShortageShifts})
-              </label>
-
-              <input type="text" class="form-control" placeholder="Search date, role, or staff..." style="width:190px; padding:5px 8px; font-size:12px;" value="${esc(currentConflictSearch)}" oninput="updateConflictSearch(this.value)">
+            <div style="font-size:12px; color:#64748b; font-weight:600;">
+              ${currentConflictTab === 'contract' ? `Total Unfulfilled Contract Hours: <strong style="color:#b91c1c;">-${totalContractShortageHours} hrs</strong> across ${totalContractShortagesCount} staff` : `Total Understaffed Shift Slots: <strong style="color:#b91c1c;">${totalShortageShifts} slots</strong> across cycle`}
             </div>
           </div>
 
-          <!-- Date-by-Date Shortage List -->
-          <div style="max-height:480px; overflow-y:auto; padding-right:4px;">
-            ${filtered.length === 0 ? `
-              <div style="text-align:center; padding:32px 16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; color:#64748b;">
-                <div style="font-size:20px; margin-bottom:6px;">🎉</div>
-                <div style="font-weight:700; color:#0f172a; margin-bottom:4px;">No Shortages Found</div>
-                <div style="font-size:12px;">All selected dates and shifts meet full staffing quotas.</div>
+          ${currentConflictTab === 'contract' ? `
+            <!-- Policy Banner -->
+            <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; align-items:flex-start; gap:10px;">
+              <span style="font-size:18px;">🛡️</span>
+              <div style="font-size:12px; color:#1e40af; line-height:1.5;">
+                <strong>Strict Policy: Zero Overtime & Exact Match Enforcement</strong><br>
+                Employees are strictly never scheduled for extra hours beyond their monthly contract. For staff whose weekly contracts cannot be tallied cleanly into 11-hour shifts (e.g. 15h or 40h), the engine caps their shifts to prevent unauthorized overtime. Detailed cause diagnosis and shift duration recommendations are listed below.
               </div>
-            ` : filtered.map(e => {
-              // Group all active reasons on this date
-              const fatigueReasons = [];
-              const turnaroundReasons = [];
-              const leaveReasons = [];
-              const trainingReasons = [];
-              const prefReasons = [];
-              const capReasons = [];
+            </div>
 
-              (e.breakdown || []).forEach(b => {
-                (b.reasons || []).forEach(r => {
-                  const item = { employeeName: r.employeeName, role: b.role, reason: r.reason };
-                  if (r.reason.includes("Consecutive Days Limit") || r.reason.includes("5-day")) {
-                    if (!fatigueReasons.some(x => x.employeeName === r.employeeName)) fatigueReasons.push(item);
-                  } else if (r.reason.includes("Turnaround Rest") || r.reason.includes("night shift")) {
-                    if (!turnaroundReasons.some(x => x.employeeName === r.employeeName)) turnaroundReasons.push(item);
-                  } else if (r.reason.includes("Leave")) {
-                    if (!leaveReasons.some(x => x.employeeName === r.employeeName)) leaveReasons.push(item);
-                  } else if (r.reason.includes("Training")) {
-                    if (!trainingReasons.some(x => x.employeeName === r.employeeName)) trainingReasons.push(item);
-                  } else if (r.reason.includes("Unavailability") || r.reason.includes("preference")) {
-                    if (!prefReasons.some(x => x.employeeName === r.employeeName)) prefReasons.push(item);
-                  } else if (r.reason.includes("Contract Hours Reached") || r.reason.includes("fulfilled")) {
-                    if (!capReasons.some(x => x.employeeName === r.employeeName)) capReasons.push(item);
-                  }
-                });
-              });
+            <!-- Contract Shortages Filter Row -->
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <span style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-right:4px;">Cause:</span>
+                <button class="btn ${currentContractShortageCategory === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 9px; font-size:12px;" onclick="setContractShortageCategory('all')">
+                  All Causes (${cShortages.length})
+                </button>
+                <button class="btn ${currentContractShortageCategory === 'Divisibility & Rounding' ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 9px; font-size:12px;" onclick="setContractShortageCategory('Divisibility & Rounding')">
+                  🟡 Divisibility & Rounding (${cShortages.filter(c => c.category === 'Divisibility & Rounding').length})
+                </button>
+                <button class="btn ${currentContractShortageCategory === 'Zero Overstaffing Limit' ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 9px; font-size:12px;" onclick="setContractShortageCategory('Zero Overstaffing Limit')">
+                  🔴 Floor Quota Met (${cShortages.filter(c => c.category === 'Zero Overstaffing Limit').length})
+                </button>
+                <button class="btn ${currentContractShortageCategory === 'Leave & Availability' ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 9px; font-size:12px;" onclick="setContractShortageCategory('Leave & Availability')">
+                  🔵 Leave & Availability (${cShortages.filter(c => c.category === 'Leave & Availability').length})
+                </button>
+              </div>
 
-              const roleShortages = (e.breakdown || []).filter(b => b.shortage > 0);
+              <input type="text" class="form-control" placeholder="Search staff or role..." style="width:200px; padding:5px 8px; font-size:12px;" value="${esc(currentContractShortageSearch)}" oninput="updateContractShortageSearch(this.value)">
+            </div>
 
-              return `
-                <div style="background:#ffffff; border:1.5px solid ${e.shortage > 0 ? '#fca5a5' : '#86efac'}; border-radius:8px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,0.04); overflow:hidden;">
-                  <!-- Header -->
-                  <div style="padding:10px 16px; background:${e.shortage > 0 ? '#fef2f2' : '#f0fdf4'}; border-bottom:1px solid ${e.shortage > 0 ? '#fee2e2' : '#dcfce7'}; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                    <div>
-                      <span style="font-weight:800; font-size:15px; color:${e.shortage > 0 ? '#991b1b' : '#166534'};">
-                        📅 ${e.dayName}, ${formatShortDate(e.date)}
-                      </span>
-                      <span style="font-size:12px; font-weight:700; margin-left:8px; color:${e.shift === 'D' ? '#b45309' : '#4338ca'}; background:${e.shift === 'D' ? '#fef3c7' : '#e0e7ff'}; padding:2px 8px; border-radius:4px;">
-                        ${e.shift === 'D' ? '☀️ Day Shift' : '🌙 Night Shift'}
-                      </span>
-                      <span style="font-size:11px; color:#64748b; margin-left:6px;">(Week ${e.weekNum})</span>
-                    </div>
-                    <div>
-                      ${e.shortage > 0 ? `
+            <!-- Contract Shortages List -->
+            <div style="max-height:480px; overflow-y:auto; padding-right:4px;">
+              ${filteredContractShortages.length === 0 ? `
+                <div style="text-align:center; padding:32px 16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; color:#64748b;">
+                  <div style="font-size:20px; margin-bottom:6px;">🎉</div>
+                  <div style="font-weight:700; color:#0f172a; margin-bottom:4px;">No Contract Shortages Found</div>
+                  <div style="font-size:12px;">All staff in this category meet 100% of their contracted hours.</div>
+                </div>
+              ` : filteredContractShortages.map(c => {
+                const pct = c.nominalContractHours > 0 ? Math.min(100, Math.round((c.floorHoursWorked / c.nominalContractHours) * 100)) : 100;
+                return `
+                  <div style="background:#ffffff; border:1.5px solid ${c.badgeColor}40; border-radius:8px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04); overflow:hidden;">
+                    <!-- Header -->
+                    <div style="padding:10px 16px; background:${c.badgeBg}; border-bottom:1px solid ${c.badgeColor}30; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <strong style="font-size:14px; color:#0f172a;">${esc(c.employeeName)}</strong>
+                        <span style="font-size:11px; font-weight:700; color:#475569; background:#ffffff; border:1px solid #cbd5e1; padding:2px 8px; border-radius:4px;">
+                          ${esc(c.designation)}
+                        </span>
+                        <span style="font-size:11px; font-weight:700; color:${c.staffType === 'D' ? '#b45309' : '#4338ca'};">
+                          ${c.staffType === 'D' ? '☀️ Day Staff' : '🌙 Night Staff'}
+                        </span>
+                        <span style="font-size:11px; color:#64748b;">
+                          (${c.contractWeeklyHours} hrs/wk contract • ${c.shiftHours} hrs/shift)
+                        </span>
+                      </div>
+                      <div>
                         <span style="background:#fee2e2; color:#b91c1c; font-weight:800; font-size:12px; padding:3px 10px; border-radius:6px; border:1px solid #f87171;">
-                          ⚠️ ${e.shortage} Shortage${e.shortage > 1 ? 's' : ''} (${e.allotted} / ${e.required} Allotted)
+                          ⚠️ Shortage: -${c.shortageHours} hrs
                         </span>
+                      </div>
+                    </div>
+
+                    <!-- Body -->
+                    <div style="padding:12px 16px;">
+                      <!-- Metrics Grid -->
+                      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:10px;">
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px;">
+                          <div style="font-size:10px; color:#64748b; text-transform:uppercase; font-weight:700;">Nominal Contract Target</div>
+                          <div style="font-size:14px; font-weight:800; color:#0f172a;">${c.nominalContractHours} hrs</div>
+                        </div>
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px;">
+                          <div style="font-size:10px; color:#64748b; text-transform:uppercase; font-weight:700;">Floor Hours Worked</div>
+                          <div style="font-size:14px; font-weight:800; color:#0369a1;">${c.floorHoursWorked} hrs <span style="font-size:11px; font-weight:600; color:#64748b;">(${c.floorShiftsWorked} shf)</span></div>
+                        </div>
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px;">
+                          <div style="font-size:10px; color:#64748b; text-transform:uppercase; font-weight:700;">Contract Fulfillment</div>
+                          <div style="font-size:14px; font-weight:800; color:${pct === 100 ? '#15803d' : '#d97706'};">${pct}%</div>
+                        </div>
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px;">
+                          <div style="font-size:10px; color:#64748b; text-transform:uppercase; font-weight:700;">Shortage Reason</div>
+                          <div style="font-size:12px; font-weight:700; color:${c.badgeColor};">${esc(c.category)}</div>
+                        </div>
+                      </div>
+
+                      <!-- Reason Diagnosis -->
+                      <div style="background:#f8fafc; border-left:3.5px solid ${c.badgeColor}; padding:10px 12px; border-radius:0 6px 6px 0; font-size:12px; color:#1e293b; line-height:1.5;">
+                        <div style="font-weight:700; color:#0f172a; margin-bottom:3px;">📋 Why This Shortage Happened:</div>
+                        ${esc(c.reason)}
+                      </div>
+
+                      <!-- Management Recommendation -->
+                      <div style="margin-top:8px; background:#f0f9ff; border:1px dashed #7dd3fc; border-radius:6px; padding:8px 12px; font-size:12px; color:#0369a1; line-height:1.4;">
+                        <strong>💡 Management Recommendation:</strong> ${esc(c.recommendation)}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <!-- Daily Floor Quota Shortages Filter Controls -->
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+              <!-- Week Pills -->
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <span style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-right:4px;">Week:</span>
+                <button class="btn ${currentConflictWeek === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('all')">
+                  All 4 Weeks
+                </button>
+                <button class="btn ${currentConflictWeek === '1' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('1')">
+                  Week 1
+                </button>
+                <button class="btn ${currentConflictWeek === '2' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('2')">
+                  Week 2
+                </button>
+                <button class="btn ${currentConflictWeek === '3' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('3')">
+                  Week 3
+                </button>
+                <button class="btn ${currentConflictWeek === '4' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('4')">
+                  Week 4
+                </button>
+              </div>
+
+              <!-- Shift & Checkbox Filters -->
+              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <div style="display:flex; gap:4px;">
+                  <button class="btn ${currentConflictShift === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('all')">
+                    All Shifts
+                  </button>
+                  <button class="btn ${currentConflictShift === 'D' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('D')">
+                    ☀️ Day
+                  </button>
+                  <button class="btn ${currentConflictShift === 'N' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 8px; font-size:12px;" onclick="setConflictShift('N')">
+                    🌙 Night
+                  </button>
+                </div>
+
+                <label style="font-size:12px; font-weight:600; color:#334155; display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin:0;">
+                  <input type="checkbox" ${currentConflictOnlyShortages ? 'checked' : ''} onchange="toggleConflictOnlyShortages()">
+                  Only Dates with Shortages (${totalShortageShifts})
+                </label>
+
+                <input type="text" class="form-control" placeholder="Search date, role, or staff..." style="width:190px; padding:5px 8px; font-size:12px;" value="${esc(currentConflictSearch)}" oninput="updateConflictSearch(this.value)">
+              </div>
+            </div>
+
+            <!-- Date-by-Date Shortage List -->
+            <div style="max-height:480px; overflow-y:auto; padding-right:4px;">
+              ${filtered.length === 0 ? `
+                <div style="text-align:center; padding:32px 16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; color:#64748b;">
+                  <div style="font-size:20px; margin-bottom:6px;">🎉</div>
+                  <div style="font-weight:700; color:#0f172a; margin-bottom:4px;">No Shortages Found</div>
+                  <div style="font-size:12px;">All selected dates and shifts meet full staffing quotas.</div>
+                </div>
+              ` : filtered.map(e => {
+                // Group all active reasons on this date
+                const fatigueReasons = [];
+                const turnaroundReasons = [];
+                const leaveReasons = [];
+                const trainingReasons = [];
+                const prefReasons = [];
+                const capReasons = [];
+
+                (e.breakdown || []).forEach(b => {
+                  (b.reasons || []).forEach(r => {
+                    const item = { employeeName: r.employeeName, role: b.role, reason: r.reason };
+                    if (r.reason.includes("Consecutive Days Limit") || r.reason.includes("5-day")) {
+                      if (!fatigueReasons.some(x => x.employeeName === r.employeeName)) fatigueReasons.push(item);
+                    } else if (r.reason.includes("Turnaround Rest") || r.reason.includes("night shift")) {
+                      if (!turnaroundReasons.some(x => x.employeeName === r.employeeName)) turnaroundReasons.push(item);
+                    } else if (r.reason.includes("Leave")) {
+                      if (!leaveReasons.some(x => x.employeeName === r.employeeName)) leaveReasons.push(item);
+                    } else if (r.reason.includes("Training")) {
+                      if (!trainingReasons.some(x => x.employeeName === r.employeeName)) trainingReasons.push(item);
+                    } else if (r.reason.includes("Unavailability") || r.reason.includes("preference")) {
+                      if (!prefReasons.some(x => x.employeeName === r.employeeName)) prefReasons.push(item);
+                    } else if (r.reason.includes("Contract Hours Reached") || r.reason.includes("fulfilled")) {
+                      if (!capReasons.some(x => x.employeeName === r.employeeName)) capReasons.push(item);
+                    }
+                  });
+                });
+
+                const roleShortages = (e.breakdown || []).filter(b => b.shortage > 0);
+
+                return `
+                  <div style="background:#ffffff; border:1.5px solid ${e.shortage > 0 ? '#fca5a5' : '#86efac'}; border-radius:8px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,0.04); overflow:hidden;">
+                    <!-- Header -->
+                    <div style="padding:10px 16px; background:${e.shortage > 0 ? '#fef2f2' : '#f0fdf4'}; border-bottom:1px solid ${e.shortage > 0 ? '#fee2e2' : '#dcfce7'}; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                      <div>
+                        <span style="font-weight:800; font-size:15px; color:${e.shortage > 0 ? '#991b1b' : '#166534'};">
+                          📅 ${e.dayName}, ${formatShortDate(e.date)}
+                        </span>
+                        <span style="font-size:12px; font-weight:700; margin-left:8px; color:${e.shift === 'D' ? '#b45309' : '#4338ca'}; background:${e.shift === 'D' ? '#fef3c7' : '#e0e7ff'}; padding:2px 8px; border-radius:4px;">
+                          ${e.shift === 'D' ? '☀️ Day Shift' : '🌙 Night Shift'}
+                        </span>
+                        <span style="font-size:11px; color:#64748b; margin-left:6px;">(Week ${e.weekNum})</span>
+                      </div>
+                      <div>
+                        ${e.shortage > 0 ? `
+                          <span style="background:#fee2e2; color:#b91c1c; font-weight:800; font-size:12px; padding:3px 10px; border-radius:6px; border:1px solid #f87171;">
+                            ⚠️ ${e.shortage} Shortage${e.shortage > 1 ? 's' : ''} (${e.allotted} / ${e.required} Allotted)
+                          </span>
+                        ` : `
+                          <span style="background:#dcfce7; color:#15803d; font-weight:800; font-size:12px; padding:3px 10px; border-radius:6px; border:1px solid #86efac;">
+                            ✅ Fully Staffed (${e.allotted} / ${e.required} Allotted)
+                          </span>
+                        `}
+                      </div>
+                    </div>
+
+                    <!-- Body -->
+                    <div style="padding:14px 16px;">
+                      ${e.shortage > 0 ? `
+                        <!-- Section 1: Specific Role Shortages -->
+                        <div style="margin-bottom:12px;">
+                          <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
+                            • Shortages by Role:
+                          </div>
+                          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            ${roleShortages.map(b => `
+                              <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:4px 10px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
+                                <strong style="color:#991b1b;">${esc(b.role)}:</strong>
+                                <span style="color:#b91c1c; font-weight:800;">-${b.shortage}</span>
+                                <span style="color:#64748b; font-size:11px;">(${b.allotted} on duty / ${b.required} required)</span>
+                              </div>
+                            `).join('')}
+                          </div>
+                        </div>
+
+                        <!-- Section 2: Why Did These Shortages Happen? (Relevant Rules) -->
+                        <div>
+                          <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
+                            • Rules Explaining Why Off-Duty Staff Cannot Cover:
+                          </div>
+                          <div style="display:flex; flex-direction:column; gap:6px;">
+                            ${fatigueReasons.length > 0 ? `
+                              <div style="background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#92400e; margin-bottom:2px;">
+                                  🛑 Consecutive Days Limit (Max 4 Days):
+                                </div>
+                                <div style="color:#78350f;">
+                                  ${fatigueReasons.length} staff member(s) already worked 4 days in a row and are resting to prevent a 5-day fatigue streak:
+                                  <strong>${fatigueReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
+                                </div>
+                              </div>
+                            ` : ''}
+
+                            ${turnaroundReasons.length > 0 ? `
+                              <div style="background:#e0f2fe; border:1px solid #bae6fd; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#0369a1; margin-bottom:2px;">
+                                  🌙 Night-to-Day Turnaround Rest:
+                                </div>
+                                <div style="color:#075985;">
+                                  ${turnaroundReasons.length} staff worked Sunday night (finishing Monday 8:00 AM) and are sleeping/resting:
+                                  <strong>${turnaroundReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
+                                </div>
+                              </div>
+                            ` : ''}
+
+                            ${leaveReasons.length > 0 ? `
+                              <div style="background:#f3e8ff; border:1px solid #e9d5ff; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#7e22ce; margin-bottom:2px;">
+                                  🏖️ Approved Annual Leave:
+                                </div>
+                                <div style="color:#6b21a8;">
+                                  ${leaveReasons.length} staff member(s) away on statutory approved leave:
+                                  <strong>${leaveReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
+                                </div>
+                              </div>
+                            ` : ''}
+
+                            ${trainingReasons.length > 0 ? `
+                              <div style="background:#e0e7ff; border:1px solid #c7d2fe; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#3730a3; margin-bottom:2px;">
+                                  🎓 Mandatory Training:
+                                </div>
+                                <div style="color:#312e81;">
+                                  ${trainingReasons.length} staff member(s) attending mandatory care training:
+                                  <strong>${trainingReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
+                                </div>
+                              </div>
+                            ` : ''}
+
+                            ${prefReasons.length > 0 ? `
+                              <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#334155; margin-bottom:2px;">
+                                  📅 Personal Unavailability Request:
+                                </div>
+                                <div style="color:#475569;">
+                                  ${prefReasons.length} staff member(s) requested this specific date off:
+                                  <strong>${prefReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
+                                </div>
+                              </div>
+                            ` : ''}
+
+                            ${capReasons.length > 0 && fatigueReasons.length === 0 && turnaroundReasons.length === 0 && leaveReasons.length === 0 ? `
+                              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 12px; font-size:12px;">
+                                <div style="font-weight:700; color:#475569; margin-bottom:2px;">
+                                  🔒 Contract Hours Reached:
+                                </div>
+                                <div style="color:#64748b;">
+                                  Staff in this role have already completed their contracted shift quota for the period (no overstaffing).
+                                </div>
+                              </div>
+                            ` : ''}
+                          </div>
+                        </div>
                       ` : `
-                        <span style="background:#dcfce7; color:#15803d; font-weight:800; font-size:12px; padding:3px 10px; border-radius:6px; border:1px solid #86efac;">
-                          ✅ Fully Staffed (${e.allotted} / ${e.required} Allotted)
-                        </span>
+                        <div style="color:#15803d; font-size:13px; font-weight:600;">
+                          ✅ Full staffing quota met. All required roles are staffed for this shift.
+                        </div>
                       `}
                     </div>
                   </div>
-
-                  <!-- Body -->
-                  <div style="padding:14px 16px;">
-                    ${e.shortage > 0 ? `
-                      <!-- Section 1: Specific Role Shortages -->
-                      <div style="margin-bottom:12px;">
-                        <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
-                          • Shortages by Role:
-                        </div>
-                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                          ${roleShortages.map(b => `
-                            <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:4px 10px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
-                              <strong style="color:#991b1b;">${esc(b.role)}:</strong>
-                              <span style="color:#b91c1c; font-weight:800;">-${b.shortage}</span>
-                              <span style="color:#64748b; font-size:11px;">(${b.allotted} on duty / ${b.required} required)</span>
-                            </div>
-                          `).join('')}
-                        </div>
-                      </div>
-
-                      <!-- Section 2: Why Did These Shortages Happen? (Relevant Rules) -->
-                      <div>
-                        <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
-                          • Rules Explaining Why Off-Duty Staff Cannot Cover:
-                        </div>
-                        <div style="display:flex; flex-direction:column; gap:6px;">
-                          ${fatigueReasons.length > 0 ? `
-                            <div style="background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#92400e; margin-bottom:2px;">
-                                🛑 Consecutive Days Limit (Max 4 Days):
-                              </div>
-                              <div style="color:#78350f;">
-                                ${fatigueReasons.length} staff member(s) already worked 4 days in a row and are resting to prevent a 5-day fatigue streak:
-                                <strong>${fatigueReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
-                              </div>
-                            </div>
-                          ` : ''}
-
-                          ${turnaroundReasons.length > 0 ? `
-                            <div style="background:#e0f2fe; border:1px solid #bae6fd; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#0369a1; margin-bottom:2px;">
-                                🌙 Night-to-Day Turnaround Rest:
-                              </div>
-                              <div style="color:#075985;">
-                                ${turnaroundReasons.length} staff worked Sunday night (finishing Monday 8:00 AM) and are sleeping/resting:
-                                <strong>${turnaroundReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
-                              </div>
-                            </div>
-                          ` : ''}
-
-                          ${leaveReasons.length > 0 ? `
-                            <div style="background:#f3e8ff; border:1px solid #e9d5ff; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#7e22ce; margin-bottom:2px;">
-                                🏖️ Approved Annual Leave:
-                              </div>
-                              <div style="color:#6b21a8;">
-                                ${leaveReasons.length} staff member(s) away on statutory approved leave:
-                                <strong>${leaveReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
-                              </div>
-                            </div>
-                          ` : ''}
-
-                          ${trainingReasons.length > 0 ? `
-                            <div style="background:#e0e7ff; border:1px solid #c7d2fe; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#3730a3; margin-bottom:2px;">
-                                🎓 Mandatory Training:
-                              </div>
-                              <div style="color:#312e81;">
-                                ${trainingReasons.length} staff member(s) attending mandatory care training:
-                                <strong>${trainingReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
-                              </div>
-                            </div>
-                          ` : ''}
-
-                          ${prefReasons.length > 0 ? `
-                            <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#334155; margin-bottom:2px;">
-                                📅 Personal Unavailability Request:
-                              </div>
-                              <div style="color:#475569;">
-                                ${prefReasons.length} staff member(s) requested this specific date off:
-                                <strong>${prefReasons.map(r => esc(r.employeeName)).join(', ')}</strong>.
-                              </div>
-                            </div>
-                          ` : ''}
-
-                          ${capReasons.length > 0 && fatigueReasons.length === 0 && turnaroundReasons.length === 0 && leaveReasons.length === 0 ? `
-                            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 12px; font-size:12px;">
-                              <div style="font-weight:700; color:#475569; margin-bottom:2px;">
-                                🔒 Contract Hours Reached:
-                              </div>
-                              <div style="color:#64748b;">
-                                Staff in this role have already completed their contracted shift quota for the period (no overstaffing).
-                              </div>
-                            </div>
-                          ` : ''}
-                        </div>
-                      </div>
-                    ` : `
-                      <div style="color:#15803d; font-size:13px; font-weight:600;">
-                        ✅ Full staffing quota met. All required roles are staffed for this shift.
-                      </div>
-                    `}
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
+                `;
+              }).join('')}
+            </div>
+          `}
         </div>
 
         <div class="modal-footer" style="background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
           <div style="font-size:12px; color:#64748b;">
-            💡 <em>Showing only relevant conflicting rules (4-day streak, night turnaround, leave, training). Overtime / overstaffing strictly prevented.</em>
+            💡 <em>Policy: Overtime & overstaffing strictly prevented. Non-round contract hour indivisibility diagnosed above.</em>
           </div>
           <button class="btn btn-secondary" onclick="closeModal()">Close Guide</button>
         </div>
