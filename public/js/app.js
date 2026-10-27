@@ -497,14 +497,6 @@ async function renderRotaView() {
               <div class="kpi-card-label">Overstaffing</div>
             </div>
           </div>
-
-          <div class="kpi-cycle-scheduler">
-            <div class="kpi-cycle-scheduler-icon">📅</div>
-            <div>
-              <div class="kpi-cycle-scheduler-title">4-Week Monday-to-Sunday Cycle Scheduler</div>
-              <div class="kpi-cycle-scheduler-desc">Period 10 (2026): 28 Sep – 25 Oct • 28 Days Active (${calendarDays && calendarDays.length > 0 ? calendarDays[0].dateString : '2026-09-28'} – ${calendarDays && calendarDays.length > 0 ? calendarDays[calendarDays.length-1].dateString : '2026-10-25'})</div>
-            </div>
-          </div>
         </div>
 
         <!-- Sub-Navigation & Overlapping Rules Button -->
@@ -1316,21 +1308,21 @@ function renderContractBalancesHtml(data) {
         </div>
       </div>
 
-      <div class="table-responsive">
-        <table>
+      <div class="table-responsive" style="overflow-x:hidden;">
+        <table style="width:100%; table-layout:auto; font-size:12.5px;">
           <thead>
             <tr>
-              <th style="min-width:180px;">Staff Member</th>
-              <th style="min-width:140px;">Role</th>
-              <th style="min-width:80px; text-align:center;">Type</th>
-              <th style="min-width:110px; text-align:center;">Weekly Contract</th>
-              <th style="min-width:110px; text-align:center;">4-Wk Base Hrs</th>
-              <th style="min-width:120px; text-align:center;">Leave Deduct</th>
-              <th style="min-width:120px; text-align:center;">Net Target</th>
-              <th style="min-width:130px; text-align:center;">Floor Worked</th>
-              <th style="min-width:120px; text-align:center;">Balance</th>
-              <th style="min-width:140px;">Target Progress</th>
-              <th style="min-width:110px; text-align:center;">Status</th>
+              <th style="padding:10px 8px;">Staff Member</th>
+              <th style="padding:10px 8px;">Role</th>
+              <th style="text-align:center; padding:10px 6px;">Type</th>
+              <th style="text-align:center; padding:10px 6px;">Weekly Contract</th>
+              <th style="text-align:center; padding:10px 6px;">4-Wk Base</th>
+              <th style="text-align:center; padding:10px 6px;">Leave Deduct</th>
+              <th style="text-align:center; padding:10px 6px;">Net Target</th>
+              <th style="text-align:center; padding:10px 6px;">Floor Worked</th>
+              <th style="text-align:center; padding:10px 6px;">Balance</th>
+              <th style="min-width:85px; padding:10px 8px;">Target Progress</th>
+              <th style="text-align:center; padding:10px 8px;">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -2445,17 +2437,17 @@ function renderShortageManagementView() {
     </div>
 
     <!-- Main Drag & Drop Grid with Freezed Top Shortage Row -->
-    <div class="table-responsive" style="max-height:700px; overflow-x:auto; overflow-y:auto; border-radius:8px; border:1.5px solid #cbd5e1; box-shadow:0 2px 4px rgba(0,0,0,0.05);">
-      <table class="matrix-table" style="background:#ffffff; border-collapse:separate; border-spacing:0; width:100%;">
+    <div class="table-responsive" style="max-height:700px; overflow-x:hidden; overflow-y:auto; border-radius:8px; border:1.5px solid #cbd5e1; box-shadow:0 2px 4px rgba(0,0,0,0.05); width:100%;">
+      <table class="matrix-table" style="background:#ffffff; border-collapse:separate; border-spacing:0; width:100%; table-layout:fixed;">
         <thead class="shortage-sticky-header">
           <tr style="background:#f8fafc; border-bottom:2px solid #cbd5e1;">
-            <th class="matrix-sticky-name-th" style="min-width:180px; padding:10px 12px; border-right:2px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
+            <th class="matrix-sticky-name-th" style="width:16%; padding:8px 8px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
               Staff Name
             </th>
-            <th class="matrix-sticky-role-th" style="min-width:140px; padding:10px 12px; border-right:2px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
+            <th class="matrix-sticky-role-th" style="width:13%; padding:8px 6px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
               Role
             </th>
-            <th style="min-width:130px; text-align:center; padding:10px 8px; border-right:2px solid #0b3542; background:#f8fafc; vertical-align:bottom;">
+            <th style="width:12%; text-align:center; padding:8px 4px; border-right:2px solid #0b3542; background:#f8fafc; vertical-align:bottom;">
               Contract Target
             </th>
 
@@ -2464,7 +2456,7 @@ function renderShortageManagementView() {
               const stat = dayStats[idx];
               const isWeekend = d.isWeekend;
               return `
-                <th style="text-align:center; min-width:110px; padding:6px 3px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'}; vertical-align:top;">
+                <th style="text-align:center; width:8.4%; padding:6px 2px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'}; vertical-align:top;">
                   <div style="font-size:12px; font-weight:800; color:#0f172a;">
                     ${d.dayName.substring(0, 3)}
                   </div>
@@ -2533,16 +2525,16 @@ function renderShortageManagementView() {
                 return `
                   <tr style="border-bottom:1px solid #f1f5f9;">
                     <!-- Staff Name (Sticky Left) -->
-                    <td class="matrix-sticky-name" style="padding:6px 12px; border-right:2px solid #e2e8f0;">
-                      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                        <strong style="color:#0f172a; font-size:13px;">${esc(st.employeeName)}</strong>
+                    <td class="matrix-sticky-name" style="padding:6px 8px; border-right:1px solid #e2e8f0;">
+                      <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+                        <strong style="color:#0f172a; font-size:12.5px;">${esc(st.employeeName)}</strong>
                         ${st.floor ? `
-                          <span style="font-size:10px; background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:3px; font-weight:600;">
+                          <span style="font-size:9.5px; background:#f1f5f9; color:#475569; padding:1px 4px; border-radius:3px; font-weight:600;">
                             ${esc(st.floor)}
                           </span>
                         ` : ''}
                         ${warnings.length > 0 ? `
-                          <span title="Rule Warning: ${esc(warnings.join(', '))}" style="color:#b45309; background:#fef3c7; border:1px solid #fde68a; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px; cursor:help;">
+                          <span title="Rule Warning: ${esc(warnings.join(', '))}" style="color:#b45309; background:#fef3c7; border:1px solid #fde68a; font-size:9.5px; font-weight:800; padding:1px 3px; border-radius:3px; cursor:help;">
                             ⚠️ ${warnings[0]}
                           </span>
                         ` : ''}
@@ -2550,14 +2542,14 @@ function renderShortageManagementView() {
                     </td>
 
                     <!-- Role (Sticky Left) -->
-                    <td class="matrix-sticky-role" style="padding:6px 12px; border-right:2px solid #e2e8f0; font-size:12.5px; color:#334155;">
+                    <td class="matrix-sticky-role" style="padding:6px 8px; border-right:1px solid #e2e8f0; font-size:12px; color:#334155;">
                       ${esc(st.designation)}
                     </td>
 
                     <!-- Contract Target -->
-                    <td style="text-align:center; padding:6px 8px; border-right:2px solid #0b3542; font-size:12px; color:#475569; white-space:nowrap;">
+                    <td style="text-align:center; padding:6px 4px; border-right:2px solid #0b3542; font-size:11.5px; color:#475569; white-space:nowrap;">
                       <strong>${st.contractWeeklyHours || st.contractHours}h</strong>
-                      <span style="color:#059669; font-weight:700; margin-left:4px;">(Tgt: ${targetShifts} shf)</span>
+                      <span style="color:#059669; font-weight:700; margin-left:3px;">(Tgt: ${targetShifts} shf)</span>
                     </td>
 
                     <!-- 7 Day Shift Cells (Interactive Drag & Drop) -->

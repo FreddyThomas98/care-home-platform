@@ -81,7 +81,8 @@ body {
   background-color: var(--bg-app);
   color: var(--text-body);
   line-height: 1.5;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -92,10 +93,11 @@ body {
 
 .login-split-container {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   position: relative;
   background: var(--teal-deep);
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 /* LEFT HERO PANEL */
@@ -105,9 +107,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: 60px 40px 60px 70px;
+  padding: 40px 30px 40px 60px;
   z-index: 1;
   color: #ffffff;
+  overflow: hidden;
 }
 
 .hero-wave-bg {
@@ -267,12 +270,12 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-30%, -50%);
-  width: 440px;
+  width: 410px;
   max-width: 90vw;
   background: var(--bg-card);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0,0,0,0.04);
-  padding: 38px 36px 32px 36px;
+  padding: 30px 32px 28px 32px;
   z-index: 10;
 }
 
@@ -814,11 +817,11 @@ body {
   flex-wrap: wrap;
 }
 
-/* KPI SUMMARY METRICS ROW (Matching Image 3: 4 Metrics + Cycle Scheduler Card) */
+/* KPI SUMMARY METRICS ROW (4 Clean Metric Cards) */
 .kpi-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) minmax(280px, 1.4fr);
-  gap: 14px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
   background: #ffffff;
@@ -1227,27 +1230,48 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* ULTRA SLIM MODERN SCROLLBARS */
+*::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.main-canvas::-webkit-scrollbar,
+.app-sidebar::-webkit-scrollbar,
 .table-responsive::-webkit-scrollbar,
 .matrix-scroll-container::-webkit-scrollbar {
-  height: 8px;
-  width: 8px;
+  width: 4px;
+  height: 4px;
 }
 
+*::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.main-canvas::-webkit-scrollbar-track,
+.app-sidebar::-webkit-scrollbar-track,
 .table-responsive::-webkit-scrollbar-track,
 .matrix-scroll-container::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  border-radius: 4px;
+  background: transparent;
 }
 
+*::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.main-canvas::-webkit-scrollbar-thumb,
+.app-sidebar::-webkit-scrollbar-thumb,
 .table-responsive::-webkit-scrollbar-thumb,
 .matrix-scroll-container::-webkit-scrollbar-thumb {
-  background: #94a3b8;
-  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
 }
 
+*::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.main-canvas::-webkit-scrollbar-thumb:hover,
+.app-sidebar::-webkit-scrollbar-thumb:hover,
 .table-responsive::-webkit-scrollbar-thumb:hover,
 .matrix-scroll-container::-webkit-scrollbar-thumb:hover {
   background: var(--teal-primary);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
 }
 
 /* SHORTAGE MANAGEMENT FREEZE TOP ROW & COLUMNS */
