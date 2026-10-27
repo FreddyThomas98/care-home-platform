@@ -887,3 +887,100 @@ th {
   border-radius: 6px;
 }
 
+/* ==========================================================
+   SHORTAGE MANAGEMENT & DRAG-AND-DROP STYLES
+   ========================================================= */
+
+.drag-shift-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  min-width: 44px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+.drag-shift-pill:hover {
+  transform: translateY(-1px) scale(1.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+}
+
+.drag-shift-pill:active,
+.drag-shift-pill.dragging {
+  cursor: grabbing !important;
+  opacity: 0.5;
+  transform: scale(0.96);
+}
+
+.drop-target-cell {
+  position: relative;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  min-height: 44px;
+}
+
+.drop-target-cell.drag-over {
+  background-color: #e0f2fe !important;
+  outline: 2px dashed #0284c7 !important;
+  outline-offset: -2px;
+}
+
+.shortage-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: #ffffff;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06);
+}
+
+.badge-shortage {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #f87171;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-overstaffed {
+  background: #e0e7ff;
+  color: #3730a3;
+  border: 1px solid #a5b4fc;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-met {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.contract-fulfillment-indicator {
+  position: relative;
+}
+
+.contract-fulfillment-indicator::after {
+  content: "⁺";
+  font-weight: 900;
+  font-size: 11px;
+  color: #0369a1;
+  margin-left: 2px;
+}
+
+

@@ -601,41 +601,22 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/rota/reallocate-shift", authenticateToken, async (req, res) => {
-  const { employeeId, fromDate, toDate, shiftType, coveringRole } = req.body;
-  if (!employeeId || !fromDate || !toDate) {
-    return res.status(400).json({ error: "employeeId, fromDate, and toDate are required." });
+app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
+  const { rota } = req.body;
+  if (!rota || !Array.isArray(rota)) {
+    return res.status(400).json({ error: "Updated rota array is required." });
   }
 
   try {
     const saved = await db.queryOne("SELECT * FROM saved_rotas ORDER BY id DESC LIMIT 1");
     if (!saved) {
-      return res.status(404).json({ error: "No saved rota found to reallocate shifts." });
+      return res.status(404).json({ error: "No saved rota found to update." });
     }
 
     const rotaData = JSON.parse(saved.rota_json);
-    const rotaList = rotaData.rota || [];
+    rotaData.rota = rota;
 
-    const fromRecord = rotaList.find(r => r.employeeId === employeeId && r.date === fromDate);
-    const toRecord = rotaList.find(r => r.employeeId === employeeId && r.date === toDate);
-
-    if (!fromRecord || !toRecord) {
-      return res.status(400).json({ error: "Shift records not found for specified dates." });
-    }
-
-    const actualShiftType = shiftType || fromRecord.shift || "D";
-    const actualRole = coveringRole || fromRecord.coveringRole || fromRecord.designation;
-
-    // Move shift: fromDate becomes OFF, toDate becomes the shift
-    fromRecord.shift = "OFF";
-    fromRecord.status = "OFF";
-    fromRecord.coveringRole = "";
-
-    toRecord.shift = actualShiftType;
-    toRecord.status = actualShiftType;
-    toRecord.coveringRole = actualRole;
-
-    // Recalculate dailyShortages and clashes for fromDate and toDate
+    // Load requirements and role hierarchy to accurately evaluate daily quotas
     const reqList = await db.queryAll("SELECT * FROM requirements");
     const hList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
     const roleHierarchyMap = {};
@@ -656,67 +637,101 @@ app.post("/api/rota/reallocate-shift", authenticateToken, async (req, res) => {
       return base;
     };
 
+    // Recalculate dailyShortages (shortages AND overstaffing)
     (rotaData.dailyShortages || []).forEach(ds => {
-      if (ds.date === fromDate || ds.date === toDate) {
-        const dayInfo = (rotaData.calendarDays || []).find(d => d.dateString === ds.date) || { dayOfWeek: 1 };
-        const dAllotted = rotaList.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR").length;
-        const nAllotted = rotaList.filter(r => r.date === ds.date && r.shift === "N").length;
+      const dayInfo = (rotaData.calendarDays || []).find(d => d.dateString === ds.date) || { dayOfWeek: 1 };
+      const dAllotted = rota.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR").length;
+      const nAllotted = rota.filter(r => r.date === ds.date && r.shift === "N").length;
 
-        ds.dayAllotted = dAllotted;
-        ds.dayShortage = Math.max(0, ds.dayRequired - dAllotted);
-        ds.nightAllotted = nAllotted;
-        ds.nightShortage = Math.max(0, ds.nightRequired - nAllotted);
+      ds.dayAllotted = dAllotted;
+      ds.dayShortage = Math.max(0, ds.dayRequired - dAllotted);
+      ds.dayOverstaffed = Math.max(0, dAllotted - ds.dayRequired);
 
-        if (ds.dayBreakdown) {
-          ds.dayBreakdown.forEach(b => {
-            const req = getReqQuota(b.role, "D", dayInfo);
-            const allotted = rotaList.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR" && (r.coveringRole === b.role || r.designation === b.role)).length;
-            b.allotted = allotted;
-            b.shortage = Math.max(0, req - allotted);
-          });
-        }
-        if (ds.nightBreakdown) {
-          ds.nightBreakdown.forEach(b => {
-            const req = getReqQuota(b.role, "N", dayInfo);
-            const allotted = rotaList.filter(r => r.date === ds.date && r.shift === "N" && (r.coveringRole === b.role || r.designation === b.role)).length;
-            b.allotted = allotted;
-            b.shortage = Math.max(0, req - allotted);
-          });
-        }
+      ds.nightAllotted = nAllotted;
+      ds.nightShortage = Math.max(0, ds.nightRequired - nAllotted);
+      ds.nightOverstaffed = Math.max(0, nAllotted - ds.nightRequired);
+
+      if (ds.dayBreakdown) {
+        ds.dayBreakdown.forEach(b => {
+          const req = getReqQuota(b.role, "D", dayInfo);
+          const allotted = rota.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR" && (r.coveringRole === b.role || r.designation === b.role)).length;
+          b.allotted = allotted;
+          b.shortage = Math.max(0, req - allotted);
+          b.overstaffed = Math.max(0, allotted - req);
+        });
+      }
+      if (ds.nightBreakdown) {
+        ds.nightBreakdown.forEach(b => {
+          const req = getReqQuota(b.role, "N", dayInfo);
+          const allotted = rota.filter(r => r.date === ds.date && r.shift === "N" && (r.coveringRole === b.role || r.designation === b.role)).length;
+          b.allotted = allotted;
+          b.shortage = Math.max(0, req - allotted);
+          b.overstaffed = Math.max(0, allotted - req);
+        });
       }
     });
 
-    if (rotaData.clashes) {
-      rotaData.clashes = (rotaData.dailyShortages || []).flatMap(ds => {
-        const items = [];
-        if (ds.dayShortage > 0) {
-          items.push({
-            date: ds.date,
-            day: ds.dayName,
-            shiftType: "Day",
-            required: ds.dayRequired,
-            allotted: ds.dayAllotted,
-            shortage: ds.dayShortage,
-            breakdown: ds.dayBreakdown || [],
-            message: `Understaffing on ${ds.dayName} ${ds.date} (Day Shift): ${ds.dayAllotted} / ${ds.dayRequired} staff allotted. Deficit: -${ds.dayShortage} staff.`
-          });
-        }
-        if (ds.nightShortage > 0) {
-          items.push({
-            date: ds.date,
-            day: ds.dayName,
-            shiftType: "Night",
-            required: ds.nightRequired,
-            allotted: ds.nightAllotted,
-            shortage: ds.nightShortage,
-            breakdown: ds.nightBreakdown || [],
-            message: `Understaffing on ${ds.dayName} ${ds.date} (Night Shift): ${ds.nightAllotted} / ${ds.nightRequired} staff allotted. Deficit: -${ds.nightShortage} staff.`
-          });
-        }
-        return items;
-      });
-    }
+    // Recalculate balances
+    (rotaData.balances || []).forEach(b => {
+      const empShifts = rota.filter(r => r.employeeId === b.employeeId && (r.shift === "D" || r.shift === "N") && r.status !== "L" && r.status !== "TR");
+      b.floorShiftsWorked = empShifts.length;
+      b.floorHoursWorked = Math.round(empShifts.length * (b.shiftHours || 11.0) * 10) / 10;
+      b.balanceRemaining = Math.max(0, Math.round(((b.netTargetHours || 0) - b.floorHoursWorked) * 10) / 10);
+      b.contractStatus = b.balanceRemaining === 0 ? "Fulfilled ✅" : `Shortage -${b.balanceRemaining}h ⚠️`;
+      b.shiftsAllotted = empShifts.length;
+      b.hoursWorked = b.floorHoursWorked;
+    });
 
+    // Recalculate contractShortages
+    rotaData.contractShortages = (rotaData.balances || []).filter(b => b.balanceRemaining > 0).map(b => ({
+      employeeId: b.employeeId,
+      employeeName: b.employeeName,
+      designation: b.designation,
+      staffType: b.staffType,
+      contractWeeklyHours: b.contractWeeklyHours,
+      shiftHours: b.shiftHours,
+      nominalContractHours: b.nominalContractHours,
+      leaveDedHours: b.leaveDedHours,
+      netTargetHours: b.netTargetHours,
+      floorHoursWorked: b.floorHoursWorked,
+      shortageHours: b.balanceRemaining,
+      category: "Manual Adjustment",
+      badgeBg: "#fef3c7",
+      badgeColor: "#d97706",
+      reason: `Manual Adjustment: Scheduled for ${b.floorHoursWorked} hrs out of ${b.netTargetHours} hrs target.`
+    }));
+
+    // Recalculate clashes
+    rotaData.clashes = (rotaData.dailyShortages || []).flatMap(ds => {
+      const items = [];
+      if (ds.dayShortage > 0) {
+        items.push({
+          date: ds.date,
+          day: ds.dayName,
+          shiftType: "Day",
+          required: ds.dayRequired,
+          allotted: ds.dayAllotted,
+          shortage: ds.dayShortage,
+          breakdown: ds.dayBreakdown || [],
+          message: `Understaffing on ${ds.dayName} ${ds.date} (Day Shift): ${ds.dayAllotted} / ${ds.dayRequired} staff allotted. Deficit: -${ds.dayShortage} staff.`
+        });
+      }
+      if (ds.nightShortage > 0) {
+        items.push({
+          date: ds.date,
+          day: ds.dayName,
+          shiftType: "Night",
+          required: ds.nightRequired,
+          allotted: ds.nightAllotted,
+          shortage: ds.nightShortage,
+          breakdown: ds.nightBreakdown || [],
+          message: `Understaffing on ${ds.dayName} ${ds.date} (Night Shift): ${ds.nightAllotted} / ${ds.nightRequired} staff allotted. Deficit: -${ds.nightShortage} staff.`
+        });
+      }
+      return items;
+    });
+
+    // Save to database
     await db.execute("UPDATE saved_rotas SET rota_json = ? WHERE id = ?", [
       JSON.stringify(rotaData),
       saved.id
@@ -724,7 +739,7 @@ app.post("/api/rota/reallocate-shift", authenticateToken, async (req, res) => {
 
     res.json({ success: true, rota: rotaData });
   } catch (err) {
-    console.error("Reallocate shift error:", err);
+    console.error("Save adjustments error:", err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -828,7 +828,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       st.assignedShifts[dStr] = {
         shift: shiftType,
         status: shiftType,
-        coveringRole: reqRole
+        coveringRole: reqRole,
+        isContractFulfillment: true
       };
       st.totalShiftsWorked++;
       st.totalHoursWorked += st.shiftHours;
@@ -1028,6 +1029,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           required: reqCount,
           allotted: allottedCount,
           shortage: shortCount,
+          overstaffed: Math.max(0, allottedCount - reqCount),
           reasons: reasons
         });
       }
@@ -1162,6 +1164,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           required: reqCount,
           allotted: allottedCount,
           shortage: shortCount,
+          overstaffed: Math.max(0, allottedCount - reqCount),
           reasons: reasons
         });
       }
@@ -1202,16 +1205,21 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
     }
 
+    const daySurplus = Math.max(0, dayAllotted - todayRequiredDayTotal);
+    const nightSurplus = Math.max(0, nightAllotted - todayRequiredNightTotal);
+
     dailyShortages.push({
       date: dStr,
       dayName: day.dayName,
       dayRequired: todayRequiredDayTotal,
       dayAllotted: dayAllotted,
       dayShortage: dayShort,
+      dayOverstaffed: daySurplus,
       dayBreakdown: dayBreakdown,
       nightRequired: todayRequiredNightTotal,
       nightAllotted: nightAllotted,
       nightShortage: nightShort,
+      nightOverstaffed: nightSurplus,
       nightBreakdown: nightBreakdown
     });
   });
@@ -1243,7 +1251,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         shiftHours: st.shiftHours,
         shift: asgn.shift,
         status: asgn.status,
-        coveringRole: asgn.coveringRole || st.designation
+        coveringRole: asgn.coveringRole || st.designation,
+        isContractFulfillment: Boolean(asgn.isContractFulfillment)
       });
     });
 
