@@ -628,39 +628,39 @@ async function renderRotaView() {
               <span>Day Staff Active: ${dayStaff.length}</span>
             </div>
 
-            <div class="table-responsive">
-              <table class="rota-staff-table">
+            <div class="table-responsive" style="overflow-x:hidden; width:100%;">
+              <table class="rota-staff-table" style="width:100%; table-layout:fixed;">
                 <thead>
                   <tr>
-                    <th style="min-width:185px;">Staff Name</th>
-                    <th style="min-width:135px;">Role</th>
-                    <th style="min-width:130px;">Contract Target</th>
+                    <th style="width:17%; min-width:140px; padding:8px 6px;">Staff Name</th>
+                    <th style="width:13%; min-width:100px; padding:8px 4px;">Role</th>
+                    <th style="width:12%; min-width:90px; padding:8px 4px;">Contract Target</th>
                     ${days.map(d => {
                       const stat = getShiftRoleStats(d, "D", rota, currentRotaData.requirements, currentRotaData.roleHierarchy, balances);
                       const isShort = stat.totalShort > 0;
                       const isOver = stat.totalOver > 0;
                       return `
-                        <th style="text-align:center; min-width:82px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
-                          <strong style="color:#0f172a;">${d.dayName.substring(0,3)}</strong><br>
-                          <small style="color:#64748b; font-weight:600;">${formatShortDate(d.dateString)}</small>
+                        <th style="text-align:center; width:8.1%; min-width:60px; padding:6px 2px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
+                          <strong style="color:#0f172a; font-size:11.5px;">${d.dayName.substring(0,3)}</strong><br>
+                          <small style="color:#64748b; font-weight:600; font-size:10px;">${formatShortDate(d.dateString)}</small>
                           ${isShort && isOver ? `
-                            <div style="margin-top:3px; display:flex; justify-content:center; gap:2px;">
+                            <div style="margin-top:2px; display:flex; justify-content:center; gap:2px;">
                               <span class="badge-short-tag">Short</span>
                               <span class="badge-over-tag">Over</span>
                             </div>
                           ` : isShort ? `
-                            <div style="margin-top:3px;">
+                            <div style="margin-top:2px;">
                               <span class="badge-short-tag">Short</span>
                             </div>
                           ` : isOver ? `
-                            <div style="margin-top:3px;">
+                            <div style="margin-top:2px;">
                               <span class="badge-over-tag">Over</span>
                             </div>
                           ` : ''}
                         </th>
                       `;
                     }).join('')}
-                    <th style="text-align:center; width:44px;"></th>
+                    <th style="text-align:center; width:3%; min-width:28px; padding:0;"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -780,39 +780,39 @@ async function renderRotaView() {
               <span>Night Staff Active: ${nightStaff.length}</span>
             </div>
 
-            <div class="table-responsive">
-              <table class="night-table rota-staff-table">
+            <div class="table-responsive" style="overflow-x:hidden; width:100%;">
+              <table class="night-table rota-staff-table" style="width:100%; table-layout:fixed;">
                 <thead>
                   <tr>
-                    <th style="min-width:185px;">Staff Name</th>
-                    <th style="min-width:135px;">Role</th>
-                    <th style="min-width:130px;">Contract Target</th>
+                    <th style="width:17%; min-width:140px; padding:8px 6px;">Staff Name</th>
+                    <th style="width:13%; min-width:100px; padding:8px 4px;">Role</th>
+                    <th style="width:12%; min-width:90px; padding:8px 4px;">Contract Target</th>
                     ${days.map(d => {
                       const stat = getShiftRoleStats(d, "N", rota, currentRotaData.requirements, currentRotaData.roleHierarchy, balances);
                       const isShort = stat.totalShort > 0;
                       const isOver = stat.totalOver > 0;
                       return `
-                        <th style="text-align:center; min-width:82px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
-                          <strong style="color:#0f172a;">${d.dayName.substring(0,3)}</strong><br>
-                          <small style="color:#64748b; font-weight:600;">${formatShortDate(d.dateString)}</small>
+                        <th style="text-align:center; width:8.1%; min-width:60px; padding:6px 2px; ${isShort ? 'background:#fff1f2;' : isOver ? 'background:#eff6ff;' : ''}">
+                          <strong style="color:#0f172a; font-size:11.5px;">${d.dayName.substring(0,3)}</strong><br>
+                          <small style="color:#64748b; font-weight:600; font-size:10px;">${formatShortDate(d.dateString)}</small>
                           ${isShort && isOver ? `
-                            <div style="margin-top:3px; display:flex; justify-content:center; gap:2px;">
+                            <div style="margin-top:2px; display:flex; justify-content:center; gap:2px;">
                               <span class="badge-short-tag">Short</span>
                               <span class="badge-over-tag">Over</span>
                             </div>
                           ` : isShort ? `
-                            <div style="margin-top:3px;">
+                            <div style="margin-top:2px;">
                               <span class="badge-short-tag">Short</span>
                             </div>
                           ` : isOver ? `
-                            <div style="margin-top:3px;">
+                            <div style="margin-top:2px;">
                               <span class="badge-over-tag">Over</span>
                             </div>
                           ` : ''}
                         </th>
                       `;
                     }).join('')}
-                    <th style="text-align:center; width:44px;"></th>
+                    <th style="text-align:center; width:3%; min-width:28px; padding:0;"></th>
                   </tr>
                 </thead>
                 <tbody>
