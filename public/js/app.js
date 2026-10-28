@@ -209,6 +209,10 @@ function handleLogout() {
   removeToken();
   currentUser = null;
   currentRotaData = null;
+  const emailInput = document.getElementById("loginEmail");
+  const passInput = document.getElementById("loginPassword");
+  if (emailInput) emailInput.value = "";
+  if (passInput) passInput.value = "";
   showLogin();
 }
 
