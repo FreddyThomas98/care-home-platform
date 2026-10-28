@@ -1131,7 +1131,7 @@ body::-webkit-scrollbar-thumb:hover,
 
 .shortage-sticky-header th.matrix-sticky-role-th {
   position: sticky !important;
-  left: 180px !important;
+  left: 15% !important;
   top: 0 !important;
   z-index: 35 !important;
   background: #f8fafc !important;
@@ -1146,7 +1146,7 @@ body::-webkit-scrollbar-thumb:hover,
 
 .matrix-table td.matrix-sticky-role {
   position: sticky !important;
-  left: 180px !important;
+  left: 15% !important;
   z-index: 15 !important;
   background: #ffffff !important;
 }
@@ -1281,6 +1281,110 @@ tbody tr:hover {
   font-weight: 800;
   text-transform: uppercase;
   display: inline-block;
+}
+
+.badge-shortage {
+  font-size: 10px;
+  font-weight: 800;
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.badge-overstaffed {
+  font-size: 10px;
+  font-weight: 800;
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.badge-met {
+  font-size: 10px;
+  font-weight: 800;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+/* QUICK PICK 28-DAY CYCLE BUTTONS IN PREFERENCE MODAL */
+.period-date-btn {
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 2px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  user-select: none;
+}
+
+.period-date-btn:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.period-date-btn.selected {
+  background: linear-gradient(135deg, #065463 0%, #0d8b99 100%) !important;
+  border-color: #065463 !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  box-shadow: 0 2px 8px rgba(6, 84, 99, 0.4) !important;
+  transform: scale(1.02);
+}
+
+/* SELECTED DATES CHIPS IN PREFERENCE MODAL */
+.date-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.date-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  color: #0f766e;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.date-tag-remove {
+  cursor: pointer;
+  font-weight: 800;
+  color: #0f766e;
+  font-size: 11px;
+  transition: color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.date-tag-remove:hover {
+  color: #dc2626;
 }
 
 /* BUTTONS */

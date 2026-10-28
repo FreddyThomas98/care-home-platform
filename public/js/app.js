@@ -2441,22 +2441,22 @@ function renderShortageManagementView() {
       <table class="matrix-table" style="background:#ffffff; border-collapse:separate; border-spacing:0; width:100%; table-layout:fixed;">
         <thead class="shortage-sticky-header">
           <tr style="background:#f8fafc; border-bottom:2px solid #cbd5e1;">
-            <th class="matrix-sticky-name-th" style="width:16%; padding:8px 8px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
+            <th class="matrix-sticky-name-th" style="width:15%; padding:8px 8px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:middle; font-size:11.5px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:0.4px;">
               Staff Name
             </th>
-            <th class="matrix-sticky-role-th" style="width:13%; padding:8px 6px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:bottom;">
+            <th class="matrix-sticky-role-th" style="width:9.5%; padding:8px 6px; border-right:1px solid #cbd5e1; background:#f8fafc; vertical-align:middle; font-size:11.5px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:0.4px;">
               Role
             </th>
-            <th style="width:12%; text-align:center; padding:8px 4px; border-right:2px solid #0b3542; background:#f8fafc; vertical-align:bottom;">
+            <th style="width:8.5%; text-align:center; padding:8px 4px; border-right:2px solid #0b3542; background:#f8fafc; vertical-align:middle; font-size:11.5px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:0.4px;">
               Contract Target
             </th>
 
-            <!-- 7 Day Columns with Freezed Top Shortage Row (Matching Screenshot) -->
+            <!-- 7 Day Columns with Freezed Top Shortage Row (Optimized Widths) -->
             ${days.map((d, idx) => {
               const stat = dayStats[idx];
               const isWeekend = d.isWeekend;
               return `
-                <th style="text-align:center; width:8.4%; padding:6px 2px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'}; vertical-align:top;">
+                <th style="text-align:center; width:9.57%; padding:6px 3px; border-right:1px solid #cbd5e1; background:${isWeekend ? '#f1f5f9' : '#f8fafc'}; vertical-align:top;">
                   <div style="font-size:12px; font-weight:800; color:#0f172a;">
                     ${d.dayName.substring(0, 3)}
                   </div>
@@ -2471,23 +2471,47 @@ function renderShortageManagementView() {
                         <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${stat.totalShort}</span>
                         <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${stat.totalOver}</span>
                       </div>
-                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
-                        ${stat.shortRoles.map(r => `<div style="color:#b91c1c; font-weight:700;">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
-                        ${stat.overRoles.map(r => `<div style="color:#2563eb; font-weight:700;">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                      <div style="font-size:9.5px; line-height:1.35; margin-top:4px; width:100%; text-align:left; padding:3px 4px; background:#ffffff; border-radius:4px; border:1px solid #e2e8f0; box-sizing:border-box;">
+                        ${stat.shortRoles.map(r => `
+                          <div style="color:#b91c1c; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">
+                            <span style="font-size:7px; flex-shrink:0;">🔴</span>
+                            <span style="flex-shrink:0;">-${r.shortage}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                          </div>
+                        `).join('')}
+                        ${stat.overRoles.map(r => `
+                          <div style="color:#2563eb; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">
+                            <span style="font-size:7px; flex-shrink:0;">🔵</span>
+                            <span style="flex-shrink:0;">+${r.overstaffed}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                          </div>
+                        `).join('')}
                       </div>
                     </div>
                   ` : stat.totalShort > 0 ? `
                     <div style="display:flex; flex-direction:column; gap:2px; align-items:center;">
                       <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${stat.totalShort}</span>
-                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
-                        ${stat.shortRoles.map(r => `<div style="color:#b91c1c; font-weight:700;">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
+                      <div style="font-size:9.5px; line-height:1.35; margin-top:4px; width:100%; text-align:left; padding:3px 4px; background:#ffffff; border-radius:4px; border:1px solid #e2e8f0; box-sizing:border-box;">
+                        ${stat.shortRoles.map(r => `
+                          <div style="color:#b91c1c; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">
+                            <span style="font-size:7px; flex-shrink:0;">🔴</span>
+                            <span style="flex-shrink:0;">-${r.shortage}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                          </div>
+                        `).join('')}
                       </div>
                     </div>
                   ` : stat.totalOver > 0 ? `
                     <div style="display:flex; flex-direction:column; gap:2px; align-items:center;">
                       <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${stat.totalOver}</span>
-                      <div style="font-size:10px; line-height:1.25; margin-top:3px; max-width:115px; text-align:center;">
-                        ${stat.overRoles.map(r => `<div style="color:#2563eb; font-weight:700;">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                      <div style="font-size:9.5px; line-height:1.35; margin-top:4px; width:100%; text-align:left; padding:3px 4px; background:#ffffff; border-radius:4px; border:1px solid #e2e8f0; box-sizing:border-box;">
+                        ${stat.overRoles.map(r => `
+                          <div style="color:#2563eb; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">
+                            <span style="font-size:7px; flex-shrink:0;">🔵</span>
+                            <span style="flex-shrink:0;">+${r.overstaffed}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                          </div>
+                        `).join('')}
                       </div>
                     </div>
                   ` : `
@@ -4350,6 +4374,7 @@ async function openPreferenceModal() {
     </div>
   `;
   document.getElementById("modalContainer").innerHTML = content;
+  renderPrefDateChips();
 }
 
 function updateSelectedDaysSummary() {
