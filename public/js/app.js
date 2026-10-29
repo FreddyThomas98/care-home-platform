@@ -685,10 +685,7 @@ async function renderRotaView() {
                             <td>
                               <div style="display:flex; align-items:center; gap:10px;">
                                 ${getStaffAvatarHtml(st.employeeName)}
-                                <div>
-                                  <div style="font-weight:700; color:#0f172a;">${esc(st.employeeName)}</div>
-                                  ${st.floor ? `<span class="floor-badge">${esc(st.floor)}</span>` : ''}
-                                </div>
+                                <div style="font-weight:700; color:#0f172a;">${esc(st.employeeName)}</div>
                               </div>
                             </td>
                             <td style="font-weight:600; color:#334155;">${esc(st.designation)}</td>
@@ -827,10 +824,7 @@ async function renderRotaView() {
                         <td>
                           <div style="display:flex; align-items:center; gap:10px;">
                             ${getStaffAvatarHtml(st.employeeName)}
-                            <div>
-                              <div style="font-weight:700; color:#0f172a;">${esc(st.employeeName)}</div>
-                              ${st.floor ? `<span class="floor-badge">${esc(st.floor)}</span>` : ''}
-                            </div>
+                            <div style="font-weight:700; color:#0f172a;">${esc(st.employeeName)}</div>
                           </div>
                         </td>
                         <td style="font-weight:600; color:#334155;">${esc(st.designation)}</td>
@@ -1131,7 +1125,6 @@ function renderMonthlyMatrixHtml(data) {
                     <tr style="border-bottom:1px solid #f1f5f9;">
                       <td class="matrix-sticky-name" style="padding:6px 10px; border-right:2px solid #e2e8f0;">
                         <strong>${esc(st.employeeName)}</strong>
-                        ${st.floor ? `<span style="font-size:10px; background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:600;">${esc(st.floor)}</span>` : ''}
                       </td>
                       <td class="matrix-sticky-role" style="padding:6px 10px; border-right:2px solid #e2e8f0; font-size:12px; color:#334155;">
                         ${esc(st.designation)}
@@ -2080,11 +2073,83 @@ function renderRuleConflictsModal() {
 
 let currentShortageWeek = 1;
 let currentShortageShift = "all"; // 'all', 'D', 'N'
-let currentShortageRole = "all";
+let currentShortageRoles = []; // [] means all, or array of selected roles
+let currentShortageFloors = []; // [] means all, or array of selected floors
 let currentShortageSearch = "";
 let shortageWorkingRota = null;
 let hasUnsavedShortageChanges = false;
 let draggedShiftData = null;
+let openSlicerMenuId = null;
+
+function toggleSlicerMenu(menuId, e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById(menuId);
+  if (!menu) return;
+  const isCurrentlyOpen = menu.style.display === "block";
+  document.querySelectorAll(".slicer-popup-card").forEach(el => el.style.display = "none");
+  if (!isCurrentlyOpen) {
+    menu.style.display = "block";
+    openSlicerMenuId = menuId;
+  } else {
+    openSlicerMenuId = null;
+  }
+}
+
+function toggleShortageFloor(floorName) {
+  if (floorName === "all") {
+    if (currentShortageFloors.length === 0) {
+      currentShortageFloors = ["__none__"];
+    } else {
+      currentShortageFloors = [];
+    }
+  } else {
+    if (currentShortageFloors.length === 0) {
+      const allF = [...new Set((currentRotaData && currentRotaData.balances ? currentRotaData.balances : []).map(b => (b.floor || "").trim()).filter(Boolean))];
+      currentShortageFloors = allF.filter(f => f !== floorName);
+    } else {
+      const idx = currentShortageFloors.indexOf(floorName);
+      if (idx >= 0) {
+        currentShortageFloors.splice(idx, 1);
+        if (currentShortageFloors.length === 0) {
+          currentShortageFloors = ["__none__"];
+        }
+      } else {
+        currentShortageFloors = currentShortageFloors.filter(f => f !== "__none__");
+        currentShortageFloors.push(floorName);
+      }
+    }
+  }
+  openSlicerMenuId = "shortageFloorMenu";
+  renderShortageManagementView();
+}
+
+function toggleShortageRole(roleName) {
+  if (roleName === "all") {
+    if (currentShortageRoles.length === 0) {
+      currentShortageRoles = ["__none__"];
+    } else {
+      currentShortageRoles = [];
+    }
+  } else {
+    if (currentShortageRoles.length === 0) {
+      const allR = [...new Set((currentRotaData && currentRotaData.balances ? currentRotaData.balances : []).map(b => b.designation))];
+      currentShortageRoles = allR.filter(r => r !== roleName);
+    } else {
+      const idx = currentShortageRoles.indexOf(roleName);
+      if (idx >= 0) {
+        currentShortageRoles.splice(idx, 1);
+        if (currentShortageRoles.length === 0) {
+          currentShortageRoles = ["__none__"];
+        }
+      } else {
+        currentShortageRoles = currentShortageRoles.filter(r => r !== "__none__");
+        currentShortageRoles.push(roleName);
+      }
+    }
+  }
+  openSlicerMenuId = "shortageRoleMenu";
+  renderShortageManagementView();
+}
 
 function ensureShortageWorkingRota() {
   if (!shortageWorkingRota && currentRotaData && currentRotaData.rota) {
@@ -2104,7 +2169,8 @@ function setShortageShift(shift) {
 }
 
 function setShortageRole(role) {
-  currentShortageRole = role;
+  if (role === "all") currentShortageRoles = [];
+  else currentShortageRoles = [role];
   renderShortageManagementView();
 }
 
@@ -2344,12 +2410,21 @@ function renderShortageManagementView() {
   const totalWeekShort = dayStats.reduce((sum, s) => sum + s.totalShort, 0);
   const totalWeekOver = dayStats.reduce((sum, s) => sum + s.totalOver, 0);
 
-  // Filter staff list
+  // Extract distinct roles and floors
   const allRoles = [...new Set(balances.map(b => b.designation))].sort();
+  const allFloors = [...new Set(balances.map(b => (b.floor || "").trim()).filter(Boolean))].sort();
+  if (allFloors.length === 0) allFloors.push("Ground Floor", "Top Floor");
+
   let filteredStaff = balances.filter(st => {
     if (currentShortageShift === "D" && st.staffType !== "D") return false;
     if (currentShortageShift === "N" && st.staffType !== "N") return false;
-    if (currentShortageRole !== "all" && st.designation !== currentShortageRole) return false;
+    if (currentShortageRoles.includes("__none__")) return false;
+    if (currentShortageRoles.length > 0 && !currentShortageRoles.includes(st.designation)) return false;
+    if (currentShortageFloors.includes("__none__")) return false;
+    if (currentShortageFloors.length > 0) {
+      const f = (st.floor || "").trim();
+      if (!currentShortageFloors.includes(f)) return false;
+    }
     if (currentShortageSearch.trim()) {
       const q = currentShortageSearch.trim().toLowerCase();
       const matchName = st.employeeName.toLowerCase().includes(q);
@@ -2384,7 +2459,7 @@ function renderShortageManagementView() {
       </div>
     </div>
 
-    <!-- Filter & Week Selector Card -->
+    <!-- Filter & Week Selector Card (with Multi-Select Floor & Role Slicers) -->
     <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; padding:12px 18px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
       <!-- Week Tabs -->
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -2410,13 +2485,64 @@ function renderShortageManagementView() {
         </button>
       </div>
 
-      <!-- Role Filter & Search -->
+      <!-- Multi-Select Slicers (Floor & Role) + Search -->
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <select class="form-control" style="width:auto; padding:5px 8px; font-size:12px;" onchange="setShortageRole(this.value)">
-          <option value="all" ${currentShortageRole === 'all' ? 'selected' : ''}>All Roles (${balances.length})</option>
-          ${allRoles.map(r => `<option value="${esc(r)}" ${currentShortageRole === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
-        </select>
-        <input type="text" class="form-control" placeholder="Search staff..." style="width:160px; padding:5px 8px; font-size:12px;" value="${esc(currentShortageSearch)}" oninput="updateShortageSearch(this.value)">
+        <!-- Multi-Select Floor Slicer -->
+        <div class="dropdown-slicer" style="position:relative;">
+          <button type="button" class="btn btn-secondary" onclick="toggleSlicerMenu('shortageFloorMenu', event)" style="padding:5px 11px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
+            <span>🏢 ${currentShortageFloors.length === 0 ? `All Floors (${allFloors.length})` : currentShortageFloors.includes('__none__') ? 'No Floor' : `${currentShortageFloors.length} Floor${currentShortageFloors.length > 1 ? 's' : ''}`}</span>
+            <span style="font-size:9px; color:#64748b;">▼</span>
+          </button>
+          <div id="shortageFloorMenu" class="slicer-popup-card" onclick="event.stopPropagation()" style="display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:1000; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1); padding:10px 12px; min-width:210px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #e2e8f0; padding-bottom:6px;">
+              <span style="font-size:11px; font-weight:800; color:#475569; text-transform:uppercase;">Filter Floor</span>
+              <button type="button" onclick="toggleShortageFloor('all')" style="background:none; border:none; color:#02848f; font-size:11px; font-weight:700; cursor:pointer; padding:0;">${currentShortageFloors.length === 0 ? 'Clear All' : 'Select All'}</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; max-height:220px; overflow-y:auto;">
+              ${allFloors.map(f => {
+                const checked = currentShortageFloors.length === 0 || currentShortageFloors.includes(f);
+                const count = balances.filter(b => (b.floor || '').trim() === f).length;
+                return `
+                  <label class="slicer-checkbox-row" style="display:flex; align-items:center; gap:8px; font-size:12px; color:#1e293b; cursor:pointer; user-select:none; padding:4px 6px; border-radius:4px; transition:background 0.1s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='transparent'">
+                    <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleShortageFloor('${esc(f)}')" style="accent-color:#065463; cursor:pointer;">
+                    <span style="flex:1;">${esc(f)}</span>
+                    <span style="font-size:10px; color:#64748b; font-weight:600; background:#f1f5f9; padding:1px 6px; border-radius:10px;">${count}</span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-Select Role Slicer -->
+        <div class="dropdown-slicer" style="position:relative;">
+          <button type="button" class="btn btn-secondary" onclick="toggleSlicerMenu('shortageRoleMenu', event)" style="padding:5px 11px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
+            <span>👔 ${currentShortageRoles.length === 0 ? `All Roles (${allRoles.length})` : currentShortageRoles.includes('__none__') ? 'No Role' : `${currentShortageRoles.length} Role${currentShortageRoles.length > 1 ? 's' : ''}`}</span>
+            <span style="font-size:9px; color:#64748b;">▼</span>
+          </button>
+          <div id="shortageRoleMenu" class="slicer-popup-card" onclick="event.stopPropagation()" style="display:none; position:absolute; top:calc(100% + 4px); right:0; z-index:1000; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1); padding:10px 12px; min-width:240px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #e2e8f0; padding-bottom:6px;">
+              <span style="font-size:11px; font-weight:800; color:#475569; text-transform:uppercase;">Filter Role</span>
+              <button type="button" onclick="toggleShortageRole('all')" style="background:none; border:none; color:#02848f; font-size:11px; font-weight:700; cursor:pointer; padding:0;">${currentShortageRoles.length === 0 ? 'Clear All' : 'Select All'}</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; max-height:220px; overflow-y:auto;">
+              ${allRoles.map(r => {
+                const checked = currentShortageRoles.length === 0 || currentShortageRoles.includes(r);
+                const count = balances.filter(b => b.designation === r).length;
+                return `
+                  <label class="slicer-checkbox-row" style="display:flex; align-items:center; gap:8px; font-size:12px; color:#1e293b; cursor:pointer; user-select:none; padding:4px 6px; border-radius:4px; transition:background 0.1s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='transparent'">
+                    <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleShortageRole('${esc(r)}')" style="accent-color:#065463; cursor:pointer;">
+                    <span style="flex:1;">${esc(r)}</span>
+                    <span style="font-size:10px; color:#64748b; font-weight:600; background:#f1f5f9; padding:1px 6px; border-radius:10px;">${count}</span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- Search Input -->
+        <input type="text" class="form-control" placeholder="🔍 Search staff..." style="width:150px; padding:5px 8px; font-size:12px;" value="${esc(currentShortageSearch)}" oninput="updateShortageSearch(this.value)">
       </div>
     </div>
 
@@ -2556,11 +2682,6 @@ function renderShortageManagementView() {
                     <td class="matrix-sticky-name" style="padding:6px 8px; border-right:1px solid #e2e8f0;">
                       <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
                         <strong style="color:#0f172a; font-size:12.5px;">${esc(st.employeeName)}</strong>
-                        ${st.floor ? `
-                          <span style="font-size:9.5px; background:#f1f5f9; color:#475569; padding:1px 4px; border-radius:3px; font-weight:600;">
-                            ${esc(st.floor)}
-                          </span>
-                        ` : ''}
                         ${warnings.length > 0 ? `
                           <span title="Rule Warning: ${esc(warnings.join(', '))}" style="color:#b45309; background:#fef3c7; border:1px solid #fde68a; font-size:9.5px; font-weight:800; padding:1px 3px; border-radius:3px; cursor:help;">
                             ⚠️ ${warnings[0]}
@@ -2632,6 +2753,11 @@ function renderShortageManagementView() {
   `;
 
   container.innerHTML = content;
+
+  if (openSlicerMenuId) {
+    const el = document.getElementById(openSlicerMenuId);
+    if (el) el.style.display = "block";
+  }
 }
 
 function downloadBlob(buffer, filename) {
@@ -2794,7 +2920,7 @@ async function exportRotaToExcel() {
               });
 
               const row = wsDay.addRow([
-                st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+                st.employeeName,
                 st.designation,
                 `${st.contractHours}h`,
                 ...daysVals,
@@ -2997,7 +3123,7 @@ async function exportRotaToExcel() {
             });
 
             const row = ws.addRow([
-              st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+              st.employeeName,
               st.designation,
               `${st.contractHours}h`,
               ...daysStatus,
@@ -3146,7 +3272,7 @@ async function exportRotaToExcel() {
         grp.staff.forEach(st => {
           let dayShiftsWorked = 0;
           const row = {
-            "Staff Name": st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+            "Staff Name": st.employeeName,
             "Role": st.designation,
             "Contract Target": `${st.contractHours}h`
           };
@@ -3208,7 +3334,7 @@ async function exportRotaToExcel() {
       }
       grp.staff.forEach(st => {
         const row = {
-          "Staff Name": st.employeeName + (st.floor ? ` [${st.floor}]` : ''),
+          "Staff Name": st.employeeName,
           "Role": st.designation,
           "Contract Target": `${st.contractHours}h`
         };
@@ -3323,7 +3449,6 @@ function preparePrintContainer() {
                     <tr>
                       <td>
                         <strong>${esc(st.employeeName)}</strong>
-                        ${st.floor ? `<span style="font-size:7.5pt; color:#475569; margin-left:4px;">[${esc(st.floor)}]</span>` : ''}
                       </td>
                       <td>${esc(st.designation)}</td>
                       <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
@@ -3429,26 +3554,196 @@ function printRotaLandscape() {
 window.addEventListener("beforeprint", preparePrintContainer);
 
 /* ==========================================================
-   VIEW 2: STAFF MANAGEMENT (Backend ID Hidden, Custom Shift Hours)
+   VIEW 2: STAFF MANAGEMENT (Backend ID Hidden, Custom Shift Hours & Slicers)
    ========================================================= */
+
+let staffSearchQuery = "";
+let staffFilterRole = "all";
+let staffFilterFloor = "all";
+let staffFilterShift = "all"; // 'all', 'D', 'N'
+let cachedEmployeesList = [];
+
+function updateStaffSearch(val) {
+  staffSearchQuery = val;
+  applyStaffFilters();
+}
+
+function updateStaffFloorFilter(val) {
+  staffFilterFloor = val;
+  applyStaffFilters();
+}
+
+function updateStaffRoleFilter(val) {
+  staffFilterRole = val;
+  applyStaffFilters();
+}
+
+function updateStaffShiftFilter(val) {
+  staffFilterShift = val;
+  document.querySelectorAll(".staff-shift-btn").forEach(btn => {
+    if (btn.getAttribute("data-shift") === val) {
+      btn.classList.remove("btn-secondary");
+      btn.classList.add("btn-primary");
+    } else {
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-secondary");
+    }
+  });
+  applyStaffFilters();
+}
+
+function resetStaffFilters() {
+  staffSearchQuery = "";
+  staffFilterRole = "all";
+  staffFilterFloor = "all";
+  staffFilterShift = "all";
+  renderEmployeesView();
+}
+
+function applyStaffFilters() {
+  const tbody = document.getElementById("staffTableBody");
+  const countEl = document.getElementById("staffCountBadge");
+  if (!tbody || !cachedEmployeesList) return;
+
+  const filtered = cachedEmployeesList.filter(emp => {
+    if (staffFilterShift === "D" && emp.staff_type !== "D") return false;
+    if (staffFilterShift === "N" && emp.staff_type !== "N") return false;
+    if (staffFilterRole !== "all" && emp.designation !== staffFilterRole) return false;
+    if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) return false;
+    if (staffSearchQuery.trim()) {
+      const q = staffSearchQuery.trim().toLowerCase();
+      const matchName = (emp.name || "").toLowerCase().includes(q);
+      const matchRole = (emp.designation || "").toLowerCase().includes(q);
+      if (!matchName && !matchRole) return false;
+    }
+    return true;
+  });
+
+  if (countEl) {
+    countEl.innerHTML = `Showing <strong>${filtered.length}</strong> of ${cachedEmployeesList.length} staff members (System automatically manages backend ID)`;
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="8" style="text-align:center; padding:36px; color:#64748b; font-style:italic;">
+          No staff members match the selected filters.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(emp => `
+    <tr>
+      <td><strong>${esc(emp.name)}</strong></td>
+      <td>${esc(emp.designation)}</td>
+      <td>
+        ${emp.floor ? `<span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">🏢 ${esc(emp.floor)}</span>` : '<span style="color:#94a3b8; font-size:12px;">—</span>'}
+      </td>
+      <td>${emp.contract_hours} hrs/wk</td>
+      <td style="font-weight:700; color:#0284c7;">${emp.shift_hours || 11} hrs/shift</td>
+      <td>
+        <span class="status-pill status-${emp.staff_type}">
+          ${emp.staff_type === 'N' ? '🌙 Night' : '☀️ Day'}
+        </span>
+      </td>
+      <td>
+        <span style="color:${emp.active ? '#15803d' : '#94a3b8'}; font-weight:700;">
+          ${emp.active ? '● Active' : '○ Inactive'}
+        </span>
+      </td>
+      <td style="text-align:right;">
+        <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick='openEmployeeModal(${JSON.stringify(emp).replace(/'/g, "&apos;")})'>
+          Edit
+        </button>
+        <button class="btn btn-danger" style="padding:4px 10px; font-size:12px; margin-left:6px;" onclick="deleteEmployee('${emp.id}')">
+          Delete
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
 
 async function renderEmployeesView() {
   const container = document.getElementById("viewContainer");
   try {
-    const employees = await apiFetch("/api/employees");
+    cachedEmployeesList = await apiFetch("/api/employees");
+    const employees = cachedEmployeesList;
+
+    // Distinct roles and floors
+    const allRoles = [...new Set(employees.map(e => e.designation))].sort();
+    const allFloors = [...new Set(employees.map(e => (e.floor || "").trim()).filter(Boolean))].sort();
+
+    // Initial filter
+    const filtered = employees.filter(emp => {
+      if (staffFilterShift === "D" && emp.staff_type !== "D") return false;
+      if (staffFilterShift === "N" && emp.staff_type !== "N") return false;
+      if (staffFilterRole !== "all" && emp.designation !== staffFilterRole) return false;
+      if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) return false;
+      if (staffSearchQuery.trim()) {
+        const q = staffSearchQuery.trim().toLowerCase();
+        const matchName = (emp.name || "").toLowerCase().includes(q);
+        const matchRole = (emp.designation || "").toLowerCase().includes(q);
+        if (!matchName && !matchRole) return false;
+      }
+      return true;
+    });
 
     container.innerHTML = `
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
           <div>
             <div class="card-title">Staff Members Registry</div>
-            <div style="font-size:13px; color:#64748b;">
-              Total: ${employees.length} employees (System automatically manages backend ID)
+            <div id="staffCountBadge" style="font-size:13px; color:#64748b;">
+              Showing <strong>${filtered.length}</strong> of ${employees.length} staff members (System automatically manages backend ID)
             </div>
           </div>
           <button class="btn btn-primary" onclick="openEmployeeModal()">
             + Add Staff Member
           </button>
+        </div>
+
+        <!-- Slicers & Filter Bar (Role, Floor, Shift Type, Staff Search) -->
+        <div style="background:#f8fafc; border-top:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; padding:12px 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <!-- Search Bar -->
+            <div style="position:relative; min-width:200px;">
+              <input type="text" id="staffSearchInput" class="form-control" placeholder="🔍 Search staff by name..." value="${esc(staffSearchQuery)}" oninput="updateStaffSearch(this.value)" style="padding:6px 12px; font-size:12.5px;">
+            </div>
+
+            <!-- Floor Slicer -->
+            <select class="form-control" onchange="updateStaffFloorFilter(this.value)" style="width:auto; padding:6px 10px; font-size:12.5px; font-weight:600;">
+              <option value="all" ${staffFilterFloor === 'all' ? 'selected' : ''}>🏢 All Floors (${allFloors.length})</option>
+              ${allFloors.map(f => `<option value="${esc(f)}" ${staffFilterFloor === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+            </select>
+
+            <!-- Role Slicer -->
+            <select class="form-control" onchange="updateStaffRoleFilter(this.value)" style="width:auto; padding:6px 10px; font-size:12.5px; font-weight:600;">
+              <option value="all" ${staffFilterRole === 'all' ? 'selected' : ''}>👔 All Roles (${allRoles.length})</option>
+              ${allRoles.map(r => `<option value="${esc(r)}" ${staffFilterRole === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+            </select>
+
+            <!-- Shift Type Slicer -->
+            <div style="display:inline-flex; gap:4px; align-items:center;">
+              <span style="font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; margin-right:2px;">Shift:</span>
+              <button type="button" class="btn staff-shift-btn ${staffFilterShift === 'all' ? 'btn-primary' : 'btn-secondary'}" data-shift="all" style="padding:4px 10px; font-size:12px;" onclick="updateStaffShiftFilter('all')">
+                All
+              </button>
+              <button type="button" class="btn staff-shift-btn ${staffFilterShift === 'D' ? 'btn-primary' : 'btn-secondary'}" data-shift="D" style="padding:4px 10px; font-size:12px;" onclick="updateStaffShiftFilter('D')">
+                ☀️ Day
+              </button>
+              <button type="button" class="btn staff-shift-btn ${staffFilterShift === 'N' ? 'btn-primary' : 'btn-secondary'}" data-shift="N" style="padding:4px 10px; font-size:12px;" onclick="updateStaffShiftFilter('N')">
+                🌙 Night
+              </button>
+            </div>
+          </div>
+
+          ${(staffSearchQuery || staffFilterRole !== 'all' || staffFilterFloor !== 'all' || staffFilterShift !== 'all') ? `
+            <button class="btn btn-secondary" onclick="resetStaffFilters()" style="padding:5px 10px; font-size:12px; color:#dc2626; border-color:#fca5a5;">
+              ✕ Reset Filters
+            </button>
+          ` : ''}
         </div>
 
         <div class="table-responsive">
@@ -3465,8 +3760,14 @@ async function renderEmployeesView() {
                 <th style="text-align:right;">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              ${employees.map(emp => `
+            <tbody id="staffTableBody">
+              ${filtered.length === 0 ? `
+                <tr>
+                  <td colspan="8" style="text-align:center; padding:36px; color:#64748b; font-style:italic;">
+                    No staff members match the selected filters.
+                  </td>
+                </tr>
+              ` : filtered.map(emp => `
                 <tr>
                   <td><strong>${esc(emp.name)}</strong></td>
                   <td>${esc(emp.designation)}</td>
@@ -4775,6 +5076,14 @@ function formatShortDate(dStr) {
   const parts = dStr.split("-");
   return `${parts[2]}/${parts[1]}`;
 }
+
+// Close open slicer menus when clicking outside
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".dropdown-slicer")) {
+    document.querySelectorAll(".slicer-popup-card").forEach(el => el.style.display = "none");
+    openSlicerMenuId = null;
+  }
+});
 
 // Kick off initialization
 document.addEventListener("DOMContentLoaded", initApp);
