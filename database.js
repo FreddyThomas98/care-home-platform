@@ -39,7 +39,6 @@ if (isPostgres) {
       if (empCols.length > 0 && !empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
-      sqliteDb.exec("UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');");
     } catch (err) {}
   } catch (e) {
     // Ignore pragma errors if in memory or unsupported
@@ -145,7 +144,6 @@ async function init() {
 
       ALTER TABLE role_hierarchy ADD COLUMN IF NOT EXISTS days_per_week INTEGER NOT NULL DEFAULT 7;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS floor VARCHAR(100) DEFAULT '';
-      UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');
       ALTER TABLE preferences ALTER COLUMN target_day TYPE VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS leave_records (
@@ -238,6 +236,22 @@ async function init() {
       }
     } else {
       console.log(`✅ PostgreSQL ready (${count} employees loaded).`);
+    }
+
+    // Synchronize all PostgreSQL primary key sequences with table MAX(id)
+    const tablesWithSerial = ['users', 'requirements', 'role_hierarchy', 'leave_records', 'preferences', 'training_records', 'saved_rotas'];
+    for (const tbl of tablesWithSerial) {
+      try {
+        await pgPool.query(`
+          SELECT setval(
+            pg_get_serial_sequence('${tbl}', 'id'),
+            COALESCE((SELECT MAX(id) FROM ${tbl}), 1),
+            (SELECT MAX(id) FROM ${tbl}) IS NOT NULL
+          )
+        `);
+      } catch (seqErr) {
+        // Table or sequence may not exist yet, safe to ignore
+      }
     }
   } else {
     console.log("📁 Using local SQLite database.");
@@ -333,7 +347,6 @@ async function init() {
       if (!empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
-      sqliteDb.exec("UPDATE employees SET floor = 'Ground Floor' WHERE staff_type = 'D' AND (floor IS NULL OR floor = '');");
     } catch (e) {
       console.warn("SQLite schema / migration check:", e.message);
     }

@@ -40,6 +40,16 @@ function requireAdmin(req, res, next) {
   }
 }
 
+// System Health & Database Diagnostics Endpoint
+app.get("/api/health", async (req, res) => {
+  res.json({
+    status: "ok",
+    database: db.isPostgres ? "PostgreSQL" : "SQLite",
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
 /* ==========================================================
    1. AUTHENTICATION & USER MANAGEMENT API
    ========================================================= */
@@ -198,6 +208,40 @@ app.put("/api/employees/:id", authenticateToken, async (req, res) => {
       WHERE id = ?
     `, [name.trim(), designation.trim(), cHours, sHours, sType, isActive, empFloor, empId]);
 
+    // Synchronize changes to active saved rota if present
+    try {
+      const saved = await db.queryOne("SELECT * FROM saved_rotas ORDER BY id DESC LIMIT 1");
+      if (saved && saved.rota_json) {
+        const rotaData = JSON.parse(saved.rota_json);
+        let changed = false;
+        (rotaData.balances || []).forEach(b => {
+          if (String(b.employeeId) === String(empId)) {
+            b.employeeName = name.trim();
+            b.designation = designation.trim();
+            b.floor = empFloor;
+            b.staffType = sType;
+            b.contractHours = cHours;
+            b.shiftHours = sHours;
+            b.active = isActive;
+            changed = true;
+          }
+        });
+        (rotaData.rota || []).forEach(r => {
+          if (String(r.employeeId) === String(empId)) {
+            r.employeeName = name.trim();
+            r.designation = designation.trim();
+            r.floor = empFloor;
+            changed = true;
+          }
+        });
+        if (changed) {
+          await db.execute("UPDATE saved_rotas SET rota_json = ? WHERE id = ?", [JSON.stringify(rotaData), saved.id]);
+        }
+      }
+    } catch (syncErr) {
+      console.warn("Rota sync on employee update warning:", syncErr.message);
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -205,8 +249,23 @@ app.put("/api/employees/:id", authenticateToken, async (req, res) => {
 });
 
 app.delete("/api/employees/:id", authenticateToken, async (req, res) => {
+  const empId = req.params.id;
   try {
-    await db.execute("DELETE FROM employees WHERE id = ?", [req.params.id]);
+    await db.execute("DELETE FROM employees WHERE id = ?", [empId]);
+
+    // Also remove from active saved rota if present
+    try {
+      const saved = await db.queryOne("SELECT * FROM saved_rotas ORDER BY id DESC LIMIT 1");
+      if (saved && saved.rota_json) {
+        const rotaData = JSON.parse(saved.rota_json);
+        rotaData.balances = (rotaData.balances || []).filter(b => String(b.employeeId) !== String(empId));
+        rotaData.rota = (rotaData.rota || []).filter(r => String(r.employeeId) !== String(empId));
+        await db.execute("UPDATE saved_rotas SET rota_json = ? WHERE id = ?", [JSON.stringify(rotaData), saved.id]);
+      }
+    } catch (syncErr) {
+      console.warn("Rota sync on employee delete warning:", syncErr.message);
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -596,12 +655,40 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
       return res.json(result);
     }
     const rotaData = JSON.parse(saved.rota_json);
-    if (!rotaData.requirements) {
-      rotaData.requirements = await db.queryAll("SELECT * FROM requirements");
-    }
-    if (!rotaData.roleHierarchy) {
-      rotaData.roleHierarchy = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
-    }
+
+    // Always fetch live requirements and role hierarchy from database
+    rotaData.requirements = await db.queryAll("SELECT * FROM requirements ORDER BY id ASC");
+    rotaData.roleHierarchy = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+
+    // Synchronize active rota balances and shift assignments with live employee roster
+    const liveEmployees = await db.queryAll("SELECT * FROM employees");
+    const empMap = {};
+    liveEmployees.forEach(e => {
+      empMap[String(e.id)] = e;
+    });
+
+    (rotaData.balances || []).forEach(b => {
+      const live = empMap[String(b.employeeId)];
+      if (live) {
+        b.employeeName = live.name;
+        b.designation = live.designation;
+        b.floor = (live.floor || "").trim();
+        b.staffType = live.staff_type;
+        b.contractHours = parseFloat(live.contract_hours) || b.contractHours;
+        b.shiftHours = parseFloat(live.shift_hours) || b.shiftHours;
+        b.active = live.active;
+      }
+    });
+
+    (rotaData.rota || []).forEach(r => {
+      const live = empMap[String(r.employeeId)];
+      if (live) {
+        r.employeeName = live.name;
+        r.designation = live.designation;
+        r.floor = (live.floor || "").trim();
+      }
+    });
+
     res.json(rotaData);
   } catch (err) {
     console.error("Fetch latest rota error:", err);
@@ -629,6 +716,35 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
     const hList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
     rotaData.requirements = reqList;
     rotaData.roleHierarchy = hList;
+
+    // Synchronize balances and flat rota entries with live employee roster
+    const liveEmployees = await db.queryAll("SELECT * FROM employees");
+    const empMap = {};
+    liveEmployees.forEach(e => {
+      empMap[String(e.id)] = e;
+    });
+
+    (rotaData.balances || []).forEach(b => {
+      const live = empMap[String(b.employeeId)];
+      if (live) {
+        b.employeeName = live.name;
+        b.designation = live.designation;
+        b.floor = (live.floor || "").trim();
+        b.staffType = live.staff_type;
+        b.contractHours = parseFloat(live.contract_hours) || b.contractHours;
+        b.shiftHours = parseFloat(live.shift_hours) || b.shiftHours;
+        b.active = live.active;
+      }
+    });
+
+    (rotaData.rota || []).forEach(r => {
+      const live = empMap[String(r.employeeId)];
+      if (live) {
+        r.employeeName = live.name;
+        r.designation = live.designation;
+        r.floor = (live.floor || "").trim();
+      }
+    });
 
     const roleHierarchyMap = {};
     const roleDaysPerWeek = {};
