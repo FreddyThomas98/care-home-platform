@@ -98,10 +98,10 @@ function groupStaffByFloor(staffList, rolePriorityMap) {
   });
 
   return [
-    { name: "", label: "", staff: sortStaffByPriority(noFloor, rolePriorityMap), showHeader: false },
-    { name: "Top Floor", label: "🏢 Top Floor", staff: sortStaffByPriority(topFloor, rolePriorityMap), showHeader: true, bg: "#e0f2fe", color: "#0369a1" },
-    { name: "Ground Floor", label: "🏢 Ground Floor", staff: sortStaffByPriority(groundFloor, rolePriorityMap), showHeader: true, bg: "#f0fdf4", color: "#15803d" },
-    { name: "Lower Ground Floor", label: "🏢 Lower Ground Floor", staff: sortStaffByPriority(lowerGroundFloor, rolePriorityMap), showHeader: true, bg: "#fef3c7", color: "#92400e" }
+    { name: "Top Floor", label: "🏢 Top Floor", staff: sortStaffByPriority(topFloor, rolePriorityMap), showHeader: topFloor.length > 0, bg: "#e0f2fe", color: "#0369a1" },
+    { name: "Ground Floor", label: "🏢 Ground Floor", staff: sortStaffByPriority(groundFloor, rolePriorityMap), showHeader: groundFloor.length > 0, bg: "#f0fdf4", color: "#15803d" },
+    { name: "Lower Ground Floor", label: "🏢 Lower Ground Floor", staff: sortStaffByPriority(lowerGroundFloor, rolePriorityMap), showHeader: lowerGroundFloor.length > 0, bg: "#fef3c7", color: "#92400e" },
+    { name: "", label: "🏢 Blank / Unassigned", staff: sortStaffByPriority(noFloor, rolePriorityMap), showHeader: noFloor.length > 0, bg: "#f8fafc", color: "#475569" }
   ];
 }
 
@@ -294,8 +294,8 @@ function getRotaWeeks(data) {
   return weeks;
 }
 
-/* Helper to evaluate role-wise shortages and overstaffing live for any day & shift */
-function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances) {
+/* Helper to evaluate role-wise shortages and overstaffing live for any day & shift, with optional role & floor slicing */
+function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = [], filterFloors = []) {
   const reqList = (requirements && requirements.length > 0)
     ? requirements
     : [
@@ -321,10 +321,36 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
   const shortRoles = [];
   const overRoles = [];
 
-  const evaluatedRoleNames = [...new Set([
+  // Build employee floor lookup map
+  const empFloorMap = {};
+  (balances || []).forEach(b => {
+    empFloorMap[String(b.employeeId)] = (b.floor || "").trim();
+  });
+
+  const hasFloorFilter = filterFloors && filterFloors.length > 0;
+  const isFloorNone = hasFloorFilter && filterFloors.includes("__none__");
+  const matchesFloor = (empId) => {
+    if (!hasFloorFilter) return true;
+    if (isFloorNone) return false;
+    const f = empFloorMap[String(empId)] || "";
+    if (filterFloors.includes("__blank__") && !f) return true;
+    return filterFloors.includes(f);
+  };
+
+  let evaluatedRoleNames = [...new Set([
     ...reqList.map(r => r.role_name),
     ...(balances || []).map(b => b.designation)
   ])];
+
+  // Apply Role Filter to evaluated roles
+  const hasRoleFilter = filterRoles && filterRoles.length > 0;
+  if (hasRoleFilter) {
+    if (filterRoles.includes("__none__")) {
+      evaluatedRoleNames = [];
+    } else {
+      evaluatedRoleNames = evaluatedRoleNames.filter(r => filterRoles.includes(r));
+    }
+  }
 
   let todayReqDayTotal = 0;
   let todayReqNightTotal = 0;
@@ -344,13 +370,15 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
       r.date === d.dateString &&
       r.shift === "D" &&
       r.status !== "TR" &&
-      (r.coveringRole === roleName || r.designation === roleName)
+      (r.coveringRole === roleName || r.designation === roleName) &&
+      matchesFloor(r.employeeId)
     ).length;
 
     const allottedN = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "N" &&
-      (r.coveringRole === roleName || r.designation === roleName)
+      (r.coveringRole === roleName || r.designation === roleName) &&
+      matchesFloor(r.employeeId)
     ).length;
 
     let rShort = 0;
@@ -2103,8 +2131,13 @@ function toggleShortageFloor(floorName) {
       currentShortageFloors = [];
     }
   } else {
+    const balances = (currentRotaData && currentRotaData.balances) ? currentRotaData.balances : [];
+    const namedFloors = [...new Set(balances.map(b => (b.floor || "").trim()).filter(Boolean))];
+    const hasBlank = balances.some(b => !(b.floor || "").trim());
+    const allF = [...namedFloors];
+    if (hasBlank) allF.push("__blank__");
+
     if (currentShortageFloors.length === 0) {
-      const allF = [...new Set((currentRotaData && currentRotaData.balances ? currentRotaData.balances : []).map(b => (b.floor || "").trim()).filter(Boolean))];
       currentShortageFloors = allF.filter(f => f !== floorName);
     } else {
       const idx = currentShortageFloors.indexOf(floorName);
@@ -2116,6 +2149,9 @@ function toggleShortageFloor(floorName) {
       } else {
         currentShortageFloors = currentShortageFloors.filter(f => f !== "__none__");
         currentShortageFloors.push(floorName);
+        if (currentShortageFloors.length >= allF.length) {
+          currentShortageFloors = [];
+        }
       }
     }
   }
@@ -2131,8 +2167,8 @@ function toggleShortageRole(roleName) {
       currentShortageRoles = [];
     }
   } else {
+    const allR = [...new Set((currentRotaData && currentRotaData.balances ? currentRotaData.balances : []).map(b => b.designation))];
     if (currentShortageRoles.length === 0) {
-      const allR = [...new Set((currentRotaData && currentRotaData.balances ? currentRotaData.balances : []).map(b => b.designation))];
       currentShortageRoles = allR.filter(r => r !== roleName);
     } else {
       const idx = currentShortageRoles.indexOf(roleName);
@@ -2144,6 +2180,9 @@ function toggleShortageRole(roleName) {
       } else {
         currentShortageRoles = currentShortageRoles.filter(r => r !== "__none__");
         currentShortageRoles.push(roleName);
+        if (currentShortageRoles.length >= allR.length) {
+          currentShortageRoles = [];
+        }
       }
     }
   }
@@ -2392,9 +2431,36 @@ function renderShortageManagementView() {
     roleDaysMap[h.required_role] = parseInt(h.days_per_week, 10) || 7;
   });
 
-  // Calculate live role-wise shortage and overstaffing for each day in this week
+  // Extract distinct roles and floors (including Blank / Unassigned)
+  const allRoles = [...new Set(balances.map(b => b.designation))].sort();
+  const namedFloors = [...new Set(balances.map(b => (b.floor || "").trim()).filter(Boolean))].sort();
+  const blankFloorCount = balances.filter(b => !(b.floor || "").trim()).length;
+  const slicerFloorList = [...namedFloors];
+  if (blankFloorCount > 0) slicerFloorList.push("__blank__");
+
+  function getFloorDisplay(f) {
+    return f === "__blank__" ? "Blank / Unassigned" : f;
+  }
+
+  function getFloorBtnText() {
+    if (currentShortageFloors.length === 0) return `All Floors (${slicerFloorList.length})`;
+    if (currentShortageFloors.includes("__none__")) return "No Floor";
+    if (currentShortageFloors.length === 1) return getFloorDisplay(currentShortageFloors[0]);
+    return `${currentShortageFloors.length} Floors`;
+  }
+
+  // Calculate live role-wise shortage and overstaffing for each day in this week according to selected Floor and Role slicers
   const dayStats = days.map(d => {
-    const stat = getShiftRoleStats(d, currentShortageShift, workingRota, currentRotaData.requirements, currentRotaData.roleHierarchy, balances);
+    const stat = getShiftRoleStats(
+      d,
+      currentShortageShift,
+      workingRota,
+      currentRotaData.requirements,
+      currentRotaData.roleHierarchy,
+      balances,
+      currentShortageRoles,
+      currentShortageFloors
+    );
     return {
       date: d.dateString,
       dayName: d.dayName,
@@ -2410,11 +2476,6 @@ function renderShortageManagementView() {
   const totalWeekShort = dayStats.reduce((sum, s) => sum + s.totalShort, 0);
   const totalWeekOver = dayStats.reduce((sum, s) => sum + s.totalOver, 0);
 
-  // Extract distinct roles and floors
-  const allRoles = [...new Set(balances.map(b => b.designation))].sort();
-  const allFloors = [...new Set(balances.map(b => (b.floor || "").trim()).filter(Boolean))].sort();
-  if (allFloors.length === 0) allFloors.push("Ground Floor", "Top Floor");
-
   let filteredStaff = balances.filter(st => {
     if (currentShortageShift === "D" && st.staffType !== "D") return false;
     if (currentShortageShift === "N" && st.staffType !== "N") return false;
@@ -2423,7 +2484,8 @@ function renderShortageManagementView() {
     if (currentShortageFloors.includes("__none__")) return false;
     if (currentShortageFloors.length > 0) {
       const f = (st.floor || "").trim();
-      if (!currentShortageFloors.includes(f)) return false;
+      const matches = (!f && currentShortageFloors.includes("__blank__")) || currentShortageFloors.includes(f);
+      if (!matches) return false;
     }
     if (currentShortageSearch.trim()) {
       const q = currentShortageSearch.trim().toLowerCase();
@@ -2490,22 +2552,24 @@ function renderShortageManagementView() {
         <!-- Multi-Select Floor Slicer -->
         <div class="dropdown-slicer" style="position:relative;">
           <button type="button" class="btn btn-secondary" onclick="toggleSlicerMenu('shortageFloorMenu', event)" style="padding:5px 11px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
-            <span>🏢 ${currentShortageFloors.length === 0 ? `All Floors (${allFloors.length})` : currentShortageFloors.includes('__none__') ? 'No Floor' : `${currentShortageFloors.length} Floor${currentShortageFloors.length > 1 ? 's' : ''}`}</span>
+            <span>🏢 ${getFloorBtnText()}</span>
             <span style="font-size:9px; color:#64748b;">▼</span>
           </button>
-          <div id="shortageFloorMenu" class="slicer-popup-card" onclick="event.stopPropagation()" style="display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:1000; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1); padding:10px 12px; min-width:210px;">
+          <div id="shortageFloorMenu" class="slicer-popup-card" onclick="event.stopPropagation()" style="display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:1000; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1); padding:10px 12px; min-width:220px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #e2e8f0; padding-bottom:6px;">
               <span style="font-size:11px; font-weight:800; color:#475569; text-transform:uppercase;">Filter Floor</span>
               <button type="button" onclick="toggleShortageFloor('all')" style="background:none; border:none; color:#02848f; font-size:11px; font-weight:700; cursor:pointer; padding:0;">${currentShortageFloors.length === 0 ? 'Clear All' : 'Select All'}</button>
             </div>
             <div style="display:flex; flex-direction:column; gap:4px; max-height:220px; overflow-y:auto;">
-              ${allFloors.map(f => {
+              ${slicerFloorList.map(f => {
                 const checked = currentShortageFloors.length === 0 || currentShortageFloors.includes(f);
-                const count = balances.filter(b => (b.floor || '').trim() === f).length;
+                const count = f === '__blank__'
+                  ? balances.filter(b => !(b.floor || '').trim()).length
+                  : balances.filter(b => (b.floor || '').trim() === f).length;
                 return `
                   <label class="slicer-checkbox-row" style="display:flex; align-items:center; gap:8px; font-size:12px; color:#1e293b; cursor:pointer; user-select:none; padding:4px 6px; border-radius:4px; transition:background 0.1s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='transparent'">
                     <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleShortageFloor('${esc(f)}')" style="accent-color:#065463; cursor:pointer;">
-                    <span style="flex:1;">${esc(f)}</span>
+                    <span style="flex:1;">${f === '__blank__' ? '🏢 Blank / Unassigned' : esc(f)}</span>
                     <span style="font-size:10px; color:#64748b; font-weight:600; background:#f1f5f9; padding:1px 6px; border-radius:10px;">${count}</span>
                   </label>
                 `;
@@ -3609,7 +3673,11 @@ function applyStaffFilters() {
     if (staffFilterShift === "D" && emp.staff_type !== "D") return false;
     if (staffFilterShift === "N" && emp.staff_type !== "N") return false;
     if (staffFilterRole !== "all" && emp.designation !== staffFilterRole) return false;
-    if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) return false;
+    if (staffFilterFloor === "__blank__") {
+      if ((emp.floor || "").trim()) return false;
+    } else if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) {
+      return false;
+    }
     if (staffSearchQuery.trim()) {
       const q = staffSearchQuery.trim().toLowerCase();
       const matchName = (emp.name || "").toLowerCase().includes(q);
@@ -3671,16 +3739,21 @@ async function renderEmployeesView() {
     cachedEmployeesList = await apiFetch("/api/employees");
     const employees = cachedEmployeesList;
 
-    // Distinct roles and floors
+    // Distinct roles and floors (including Blank / Unassigned)
     const allRoles = [...new Set(employees.map(e => e.designation))].sort();
-    const allFloors = [...new Set(employees.map(e => (e.floor || "").trim()).filter(Boolean))].sort();
+    const namedFloors = [...new Set(employees.map(e => (e.floor || "").trim()).filter(Boolean))].sort();
+    const blankFloorCount = employees.filter(e => !(e.floor || "").trim()).length;
 
     // Initial filter
     const filtered = employees.filter(emp => {
       if (staffFilterShift === "D" && emp.staff_type !== "D") return false;
       if (staffFilterShift === "N" && emp.staff_type !== "N") return false;
       if (staffFilterRole !== "all" && emp.designation !== staffFilterRole) return false;
-      if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) return false;
+      if (staffFilterFloor === "__blank__") {
+        if ((emp.floor || "").trim()) return false;
+      } else if (staffFilterFloor !== "all" && (emp.floor || "").trim() !== staffFilterFloor) {
+        return false;
+      }
       if (staffSearchQuery.trim()) {
         const q = staffSearchQuery.trim().toLowerCase();
         const matchName = (emp.name || "").toLowerCase().includes(q);
@@ -3714,8 +3787,9 @@ async function renderEmployeesView() {
 
             <!-- Floor Slicer -->
             <select class="form-control" onchange="updateStaffFloorFilter(this.value)" style="width:auto; padding:6px 10px; font-size:12.5px; font-weight:600;">
-              <option value="all" ${staffFilterFloor === 'all' ? 'selected' : ''}>🏢 All Floors (${allFloors.length})</option>
-              ${allFloors.map(f => `<option value="${esc(f)}" ${staffFilterFloor === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+              <option value="all" ${staffFilterFloor === 'all' ? 'selected' : ''}>🏢 All Floors (${employees.length})</option>
+              ${namedFloors.map(f => `<option value="${esc(f)}" ${staffFilterFloor === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+              ${blankFloorCount > 0 ? `<option value="__blank__" ${staffFilterFloor === '__blank__' ? 'selected' : ''}>🏢 Blank / Unassigned (${blankFloorCount})</option>` : ''}
             </select>
 
             <!-- Role Slicer -->
