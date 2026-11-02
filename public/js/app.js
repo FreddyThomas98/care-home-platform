@@ -294,7 +294,7 @@ function getRotaWeeks(data) {
   return weeks;
 }
 
-/* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer; Team Leader combines TL + Adv. TL) */
+/* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer) */
 function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = []) {
   const reqList = (requirements && requirements.length > 0)
     ? requirements
@@ -336,66 +336,31 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     }
   }
 
-  // Group Team Leader + Advanced Team Leader under 'Team Leader'
-  const isTLGroup = (rName) => rName === "Team Leader" || rName === "Advanced Team Leader";
-  const hasTL = evaluatedRoleNames.some(isTLGroup);
-  let effectiveRoles = evaluatedRoleNames.filter(r => r !== "Advanced Team Leader");
-  if (hasTL && !effectiveRoles.includes("Team Leader")) {
-    effectiveRoles.push("Team Leader");
-  }
-
   let todayReqDayTotal = 0;
   let todayReqNightTotal = 0;
 
-  effectiveRoles.forEach(roleName => {
-    let reqD = 0;
-    let reqN = 0;
+  evaluatedRoleNames.forEach(roleName => {
+    const reqObj = reqList.find(r => r.role_name === roleName);
+    const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
+    const isDayActive = dIdx < maxDays;
 
-    if (roleName === "Team Leader") {
-      // Team Leader combines Team Leader and Advanced Team Leader using max logic
-      const reqTL = reqList.find(r => r.role_name === "Team Leader");
-      const reqAdTL = reqList.find(r => r.role_name === "Advanced Team Leader");
-      const maxDaysTL = roleDaysMap["Team Leader"] !== undefined ? roleDaysMap["Team Leader"] : 7;
-      const maxDaysAdTL = roleDaysMap["Advanced Team Leader"] !== undefined ? roleDaysMap["Advanced Team Leader"] : 7;
-      const dActiveTL = dIdx < maxDaysTL;
-      const dActiveAdTL = dIdx < maxDaysAdTL;
-
-      const dTL = (reqTL && dActiveTL) ? (reqTL.day_required || 0) : 0;
-      const dAdTL = (reqAdTL && dActiveAdTL) ? (reqAdTL.day_required || 0) : 0;
-      reqD = Math.max(dTL, dAdTL);
-
-      const nTL = (reqTL && dActiveTL) ? (reqTL.night_required || 0) : 0;
-      const nAdTL = (reqAdTL && dActiveAdTL) ? (reqAdTL.night_required || 0) : 0;
-      reqN = Math.max(nTL, nAdTL);
-    } else {
-      const reqObj = reqList.find(r => r.role_name === roleName);
-      const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
-      const isDayActive = dIdx < maxDays;
-      reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
-      reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
-    }
+    const reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
+    const reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
 
     todayReqDayTotal += reqD;
     todayReqNightTotal += reqN;
-
-    const matchesRole = (r) => {
-      if (roleName === "Team Leader") {
-        return isTLGroup(r.coveringRole) || isTLGroup(r.designation);
-      }
-      return r.coveringRole === roleName || r.designation === roleName;
-    };
 
     const allottedD = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "D" &&
       r.status !== "TR" &&
-      matchesRole(r)
+      (r.coveringRole === roleName || r.designation === roleName)
     ).length;
 
     const allottedN = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "N" &&
-      matchesRole(r)
+      (r.coveringRole === roleName || r.designation === roleName)
     ).length;
 
     let rShort = 0;
