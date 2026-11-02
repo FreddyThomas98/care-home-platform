@@ -294,8 +294,8 @@ function getRotaWeeks(data) {
   return weeks;
 }
 
-/* Helper to evaluate role-wise shortages and overstaffing live for any day & shift, with optional role & floor slicing */
-function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = [], filterFloors = []) {
+/* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer) */
+function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = []) {
   const reqList = (requirements && requirements.length > 0)
     ? requirements
     : [
@@ -320,22 +320,6 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
   const dIdx = (d.dayOfWeek + 6) % 7; // Mon=0, ..., Sun=6
   const shortRoles = [];
   const overRoles = [];
-
-  // Build employee floor lookup map
-  const empFloorMap = {};
-  (balances || []).forEach(b => {
-    empFloorMap[String(b.employeeId)] = (b.floor || "").trim();
-  });
-
-  const hasFloorFilter = filterFloors && filterFloors.length > 0;
-  const isFloorNone = hasFloorFilter && filterFloors.includes("__none__");
-  const matchesFloor = (empId) => {
-    if (!hasFloorFilter) return true;
-    if (isFloorNone) return false;
-    const f = empFloorMap[String(empId)] || "";
-    if (filterFloors.includes("__blank__") && !f) return true;
-    return filterFloors.includes(f);
-  };
 
   let evaluatedRoleNames = [...new Set([
     ...reqList.map(r => r.role_name),
@@ -370,15 +354,13 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
       r.date === d.dateString &&
       r.shift === "D" &&
       r.status !== "TR" &&
-      (r.coveringRole === roleName || r.designation === roleName) &&
-      matchesFloor(r.employeeId)
+      (r.coveringRole === roleName || r.designation === roleName)
     ).length;
 
     const allottedN = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "N" &&
-      (r.coveringRole === roleName || r.designation === roleName) &&
-      matchesFloor(r.employeeId)
+      (r.coveringRole === roleName || r.designation === roleName)
     ).length;
 
     let rShort = 0;
@@ -421,6 +403,122 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     overSummary,
     todayReqDayTotal,
     todayReqNightTotal
+  };
+}
+
+/* Helper to evaluate floor-level shortages and overstaffing live for any day & shift */
+function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balances) {
+  const reqList = (requirements && requirements.length > 0) ? requirements : [];
+  const empFloorMap = {};
+  (balances || []).forEach(b => {
+    empFloorMap[String(b.employeeId)] = (b.floor || "").trim();
+  });
+
+  const targetFloor = (floorName || "").trim();
+
+  // Working shifts on this floor for day d
+  const allottedOnFloor = (rota || []).filter(r =>
+    r.date === d.dateString &&
+    (shiftType === "all" ? (r.shift === "D" || r.shift === "N") : r.shift === shiftType) &&
+    r.status !== "TR" &&
+    r.status !== "OFF" &&
+    r.status !== "L" &&
+    (empFloorMap[String(r.employeeId)] || "") === targetFloor
+  );
+
+  const shortRoles = [];
+  const overRoles = [];
+  let hasRequirements = false;
+
+  if (targetFloor === "Top Floor") {
+    // 1. Top Floor Pooled Lead Rule: Staff Nurse or Advanced Team Leader (Target = 1)
+    const snReqObj = reqList.find(r => r.role_name === "Staff Nurse");
+    const adtlReqObj = reqList.find(r => r.role_name === "Advanced Team Leader");
+    const snReq = (snReqObj && snReqObj.top_floor_required) ? snReqObj.top_floor_required : 0;
+    const adtlReq = (adtlReqObj && adtlReqObj.top_floor_required) ? adtlReqObj.top_floor_required : 0;
+    const leadReq = Math.max(1, snReq, adtlReq, (snReq + adtlReq));
+
+    if (leadReq > 0) {
+      hasRequirements = true;
+      const allottedLeads = allottedOnFloor.filter(r =>
+        r.coveringRole === "Staff Nurse" || r.designation === "Staff Nurse" ||
+        r.coveringRole === "Advanced Team Leader" || r.designation === "Advanced Team Leader" ||
+        r.coveringRole === "Team Leader" || r.designation === "Team Leader"
+      ).length;
+
+      const sLead = Math.max(0, leadReq - allottedLeads);
+      const oLead = Math.max(0, allottedLeads - leadReq);
+      if (sLead > 0) shortRoles.push({ role: "SN / AdTL", shortage: sLead });
+      if (oLead > 0) overRoles.push({ role: "SN / AdTL", overstaffed: oLead });
+    }
+
+    // 2. Carers on Top Floor
+    const carerReqObj = reqList.find(r => r.role_name === "Carer");
+    const carerReq = (carerReqObj && carerReqObj.top_floor_required) ? carerReqObj.top_floor_required : 0;
+    if (carerReq > 0) {
+      hasRequirements = true;
+      const allottedCarers = allottedOnFloor.filter(r =>
+        r.coveringRole === "Carer" || r.designation === "Carer" ||
+        r.coveringRole === "Senior Carer" || r.designation === "Senior Carer"
+      ).length;
+
+      const sCarer = Math.max(0, carerReq - allottedCarers);
+      const oCarer = Math.max(0, allottedCarers - carerReq);
+      if (sCarer > 0) shortRoles.push({ role: "Carer", shortage: sCarer });
+      if (oCarer > 0) overRoles.push({ role: "Carer", overstaffed: oCarer });
+    }
+
+    // 3. Other explicit roles on Top Floor
+    reqList.forEach(r => {
+      if (r.role_name !== "Staff Nurse" && r.role_name !== "Advanced Team Leader" && r.role_name !== "Team Leader" && r.role_name !== "Carer" && r.role_name !== "Senior Carer") {
+        const q = r.top_floor_required || 0;
+        if (q > 0) {
+          hasRequirements = true;
+          const alltd = allottedOnFloor.filter(item => item.coveringRole === r.role_name || item.designation === r.role_name).length;
+          const s = Math.max(0, q - alltd);
+          const o = Math.max(0, alltd - q);
+          if (s > 0) shortRoles.push({ role: r.role_name, shortage: s });
+          if (o > 0) overRoles.push({ role: r.role_name, overstaffed: o });
+        }
+      }
+    });
+  } else if (targetFloor === "Ground Floor") {
+    reqList.forEach(r => {
+      const q = r.ground_floor_required || 0;
+      if (q > 0) {
+        hasRequirements = true;
+        const alltd = allottedOnFloor.filter(item => item.coveringRole === r.role_name || item.designation === r.role_name).length;
+        const s = Math.max(0, q - alltd);
+        const o = Math.max(0, alltd - q);
+        if (s > 0) shortRoles.push({ role: r.role_name, shortage: s });
+        if (o > 0) overRoles.push({ role: r.role_name, overstaffed: o });
+      }
+    });
+  } else if (targetFloor === "Lower Ground Floor") {
+    reqList.forEach(r => {
+      const q = r.lower_ground_floor_required || 0;
+      if (q > 0) {
+        hasRequirements = true;
+        const alltd = allottedOnFloor.filter(item => item.coveringRole === r.role_name || item.designation === r.role_name).length;
+        const s = Math.max(0, q - alltd);
+        const o = Math.max(0, alltd - q);
+        if (s > 0) shortRoles.push({ role: r.role_name, shortage: s });
+        if (o > 0) overRoles.push({ role: r.role_name, overstaffed: o });
+      }
+    });
+  }
+
+  const totalShort = shortRoles.reduce((sum, r) => sum + r.shortage, 0);
+  const totalOver = overRoles.reduce((sum, r) => sum + r.overstaffed, 0);
+
+  return {
+    floorName: targetFloor,
+    allottedTotal: allottedOnFloor.length,
+    hasRequirements,
+    shortRoles,
+    overRoles,
+    totalShort,
+    totalOver
   };
 }
 
@@ -2449,7 +2547,7 @@ function renderShortageManagementView() {
     return `${currentShortageFloors.length} Floors`;
   }
 
-  // Calculate live role-wise shortage and overstaffing for each day in this week according to selected Floor and Role slicers
+  // Calculate live role-wise shortage and overstaffing for each day in this week (Option 1: care-home wide, filtered by role slicer)
   const dayStats = days.map(d => {
     const stat = getShiftRoleStats(
       d,
@@ -2458,8 +2556,7 @@ function renderShortageManagementView() {
       currentRotaData.requirements,
       currentRotaData.roleHierarchy,
       balances,
-      currentShortageRoles,
-      currentShortageFloors
+      currentShortageRoles
     );
     return {
       date: d.dateString,
@@ -2729,10 +2826,69 @@ function renderShortageManagementView() {
             if (grp.staff.length === 0) return '';
             return `
               ${grp.showHeader ? `
-                <tr style="background:${grp.bg}; color:${grp.color}; font-weight:800; font-size:12px; border-top:2px solid #cbd5e1; border-bottom:1px solid ${grp.color}30;">
-                  <td colspan="${3 + days.length}" style="padding:7px 12px; letter-spacing:0.3px;">
-                    ${grp.label} &nbsp;•&nbsp; <span style="font-size:11px; font-weight:600; opacity:0.85;">${grp.staff.length} Staff Members</span>
+                <tr style="background:${grp.bg}; color:${grp.color}; font-weight:800; font-size:12px; border-top:2px solid #cbd5e1; border-bottom:1px solid ${grp.color}40;">
+                  <!-- Floor Name (Sticky Left 0) -->
+                  <td style="padding:6px 10px; font-weight:800; font-size:12px; background:${grp.bg}; color:${grp.color}; border-right:1px solid #cbd5e1; vertical-align:middle; position:sticky; left:0; z-index:15;">
+                    ${grp.label}
                   </td>
+                  <!-- Floor Section Label (Sticky Left 15%) -->
+                  <td style="padding:6px 8px; font-size:11px; font-weight:700; background:${grp.bg}; color:${grp.color}; border-right:1px solid #cbd5e1; vertical-align:middle; position:sticky; left:15%; z-index:15;">
+                    Coverage & Quota
+                  </td>
+                  <!-- Headcount in Contract Target Column -->
+                  <td style="text-align:center; padding:6px 4px; font-size:11px; font-weight:800; background:${grp.bg}; color:${grp.color}; border-right:2px solid #0b3542; vertical-align:middle; white-space:nowrap;">
+                    ${grp.staff.length} Staff
+                  </td>
+                  <!-- 7 Day Live Floor Coverage & Shortage Indicators -->
+                  ${days.map(d => {
+                    const fStat = getFloorShiftStats(d, currentShortageShift, workingRota, currentRotaData.requirements, grp.name, balances);
+                    if (fStat.hasRequirements) {
+                      if (fStat.totalShort > 0 && fStat.totalOver > 0) {
+                        return `
+                          <td style="text-align:center; padding:4px 3px; border-right:1px solid #cbd5e1; background:${grp.bg}; vertical-align:top;">
+                            <div style="display:flex; gap:2px; justify-content:center; flex-wrap:wrap; margin-bottom:2px;">
+                              <span style="background:#fee2e2; color:#991b1b; padding:1px 5px; border-radius:4px; font-size:9.5px; font-weight:800;">-${fStat.totalShort}</span>
+                              <span style="background:#dbeafe; color:#1e40af; padding:1px 5px; border-radius:4px; font-size:9.5px; font-weight:800;">+${fStat.totalOver}</span>
+                            </div>
+                            <div style="font-size:9px; font-weight:700; text-align:left; padding:2px 3px; background:#ffffff; border-radius:3px; border:1px solid #cbd5e1;">
+                              ${fStat.shortRoles.map(r => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
+                              ${fStat.overRoles.map(r => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                            </div>
+                          </td>
+                        `;
+                      } else if (fStat.totalShort > 0) {
+                        return `
+                          <td style="text-align:center; padding:4px 3px; border-right:1px solid #cbd5e1; background:${grp.bg}; vertical-align:top;">
+                            <span style="background:#fee2e2; color:#991b1b; padding:1px 5px; border-radius:4px; font-size:9.5px; font-weight:800; display:inline-block; margin-bottom:2px;">Short: -${fStat.totalShort}</span>
+                            <div style="font-size:9px; font-weight:700; text-align:left; padding:2px 3px; background:#ffffff; border-radius:3px; border:1px solid #cbd5e1;">
+                              ${fStat.shortRoles.map(r => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">🔴 -${r.shortage} ${esc(r.role)}</div>`).join('')}
+                            </div>
+                          </td>
+                        `;
+                      } else if (fStat.totalOver > 0) {
+                        return `
+                          <td style="text-align:center; padding:4px 3px; border-right:1px solid #cbd5e1; background:${grp.bg}; vertical-align:top;">
+                            <span style="background:#dbeafe; color:#1e40af; padding:1px 5px; border-radius:4px; font-size:9.5px; font-weight:800; display:inline-block; margin-bottom:2px;">Over: +${fStat.totalOver}</span>
+                            <div style="font-size:9px; font-weight:700; text-align:left; padding:2px 3px; background:#ffffff; border-radius:3px; border:1px solid #cbd5e1;">
+                              ${fStat.overRoles.map(r => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">🔵 +${r.overstaffed} ${esc(r.role)}</div>`).join('')}
+                            </div>
+                          </td>
+                        `;
+                      } else {
+                        return `
+                          <td style="text-align:center; padding:5px 3px; border-right:1px solid #cbd5e1; background:${grp.bg}; vertical-align:middle;">
+                            <span style="background:#dcfce7; color:#166534; padding:2px 5px; border-radius:4px; font-size:9.5px; font-weight:800;">✅ Met (${fStat.allottedTotal})</span>
+                          </td>
+                        `;
+                      }
+                    } else {
+                      return `
+                        <td style="text-align:center; padding:5px 3px; border-right:1px solid #cbd5e1; background:${grp.bg}; vertical-align:middle; font-size:10px; font-weight:700; color:${grp.color};">
+                          ${fStat.allottedTotal} Working
+                        </td>
+                      `;
+                    }
+                  }).join('')}
                 </tr>
               ` : ''}
 
@@ -4049,6 +4205,9 @@ async function renderRequirementsView() {
                 <th>Role / Designation</th>
                 <th style="text-align:center;">☀️ Day Required</th>
                 <th style="text-align:center;">🌙 Night Required</th>
+                <th style="text-align:center; background:#f0f9ff; color:#0369a1;">🏢 Top Floor</th>
+                <th style="text-align:center; background:#f0fdf4; color:#15803d;">🏢 Ground Floor</th>
+                <th style="text-align:center; background:#fefce8; color:#92400e;">🏢 Lower Ground</th>
                 <th style="text-align:right;">Actions</th>
               </tr>
             </thead>
@@ -4056,8 +4215,11 @@ async function renderRequirementsView() {
               ${reqs.map(r => `
                 <tr>
                   <td><strong>${esc(r.role_name)}</strong></td>
-                  <td style="text-align:center; font-weight:700; color:#0f172a; font-size:15px;">${r.day_required}</td>
-                  <td style="text-align:center; font-weight:700; color:#1e1b4b; font-size:15px;">${r.night_required}</td>
+                  <td style="text-align:center; font-weight:700; color:#0f172a; font-size:15px;">${r.day_required || 0}</td>
+                  <td style="text-align:center; font-weight:700; color:#1e1b4b; font-size:15px;">${r.night_required || 0}</td>
+                  <td style="text-align:center; font-weight:700; color:#0369a1; font-size:14px; background:#f0f9ff;">${r.top_floor_required || 0}</td>
+                  <td style="text-align:center; font-weight:700; color:#15803d; font-size:14px; background:#f0fdf4;">${r.ground_floor_required || 0}</td>
+                  <td style="text-align:center; font-weight:700; color:#92400e; font-size:14px; background:#fefce8;">${r.lower_ground_floor_required || 0}</td>
                   <td style="text-align:right;">
                     <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick='openRequirementModal(${JSON.stringify(r)})'>
                       Edit Quota
@@ -4096,11 +4258,31 @@ function openRequirementModal(req = null) {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
               <div class="form-group">
                 <label>Day Staff Required</label>
-                <input type="number" id="reqDay" class="form-control" required value="${req ? req.day_required : '1'}">
+                <input type="number" id="reqDay" class="form-control" min="0" required value="${req ? (req.day_required || 0) : '1'}">
               </div>
               <div class="form-group">
                 <label>Night Staff Required</label>
-                <input type="number" id="reqNight" class="form-control" required value="${req ? req.night_required : '0'}">
+                <input type="number" id="reqNight" class="form-control" min="0" required value="${req ? (req.night_required || 0) : '0'}">
+              </div>
+            </div>
+
+            <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e2e8f0;">
+              <div style="font-size:12px; font-weight:800; color:#475569; text-transform:uppercase; margin-bottom:8px;">
+                🏢 Floor-Level Quotas
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+                <div class="form-group">
+                  <label style="color:#0369a1; font-size:12px; font-weight:700;">Top Floor</label>
+                  <input type="number" id="reqTopFloor" class="form-control" min="0" value="${req ? (req.top_floor_required || 0) : 0}">
+                </div>
+                <div class="form-group">
+                  <label style="color:#15803d; font-size:12px; font-weight:700;">Ground Floor</label>
+                  <input type="number" id="reqGroundFloor" class="form-control" min="0" value="${req ? (req.ground_floor_required || 0) : 0}">
+                </div>
+                <div class="form-group">
+                  <label style="color:#92400e; font-size:12px; font-weight:700;">Lower Ground</label>
+                  <input type="number" id="reqLowerGroundFloor" class="form-control" min="0" value="${req ? (req.lower_ground_floor_required || 0) : 0}">
+                </div>
               </div>
             </div>
           </div>
@@ -4118,19 +4300,35 @@ function openRequirementModal(req = null) {
 async function saveRequirement(e, id) {
   e.preventDefault();
   const role_name = document.getElementById("reqRoleName").value;
-  const day_required = parseInt(document.getElementById("reqDay").value, 10);
-  const night_required = parseInt(document.getElementById("reqNight").value, 10);
+  const day_required = parseInt(document.getElementById("reqDay").value, 10) || 0;
+  const night_required = parseInt(document.getElementById("reqNight").value, 10) || 0;
+  const top_floor_required = parseInt(document.getElementById("reqTopFloor").value, 10) || 0;
+  const ground_floor_required = parseInt(document.getElementById("reqGroundFloor").value, 10) || 0;
+  const lower_ground_floor_required = parseInt(document.getElementById("reqLowerGroundFloor").value, 10) || 0;
 
   try {
     if (id) {
       await apiFetch(`/api/requirements/${id}`, {
         method: "PUT",
-        body: JSON.stringify({ day_required, night_required })
+        body: JSON.stringify({
+          day_required,
+          night_required,
+          top_floor_required,
+          ground_floor_required,
+          lower_ground_floor_required
+        })
       });
     } else {
       await apiFetch("/api/requirements", {
         method: "POST",
-        body: JSON.stringify({ role_name, day_required, night_required })
+        body: JSON.stringify({
+          role_name,
+          day_required,
+          night_required,
+          top_floor_required,
+          ground_floor_required,
+          lower_ground_floor_required
+        })
       });
     }
     closeModal();

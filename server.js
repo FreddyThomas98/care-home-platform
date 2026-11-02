@@ -286,13 +286,20 @@ app.get("/api/requirements", authenticateToken, async (req, res) => {
 });
 
 app.put("/api/requirements/:id", authenticateToken, async (req, res) => {
-  const { day_required, night_required } = req.body;
+  const { day_required, night_required, top_floor_required, ground_floor_required, lower_ground_floor_required } = req.body;
   try {
     await db.execute(`
       UPDATE requirements
-      SET day_required = ?, night_required = ?
+      SET day_required = ?, night_required = ?, top_floor_required = ?, ground_floor_required = ?, lower_ground_floor_required = ?
       WHERE id = ?
-    `, [parseInt(day_required, 10) || 0, parseInt(night_required, 10) || 0, req.params.id]);
+    `, [
+      parseInt(day_required, 10) || 0,
+      parseInt(night_required, 10) || 0,
+      parseInt(top_floor_required, 10) || 0,
+      parseInt(ground_floor_required, 10) || 0,
+      parseInt(lower_ground_floor_required, 10) || 0,
+      req.params.id
+    ]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -300,12 +307,19 @@ app.put("/api/requirements/:id", authenticateToken, async (req, res) => {
 });
 
 app.post("/api/requirements", authenticateToken, async (req, res) => {
-  const { role_name, day_required, night_required } = req.body;
+  const { role_name, day_required, night_required, top_floor_required, ground_floor_required, lower_ground_floor_required } = req.body;
   try {
     await db.execute(`
-      INSERT INTO requirements (role_name, day_required, night_required)
-      VALUES (?, ?, ?)
-    `, [role_name.trim(), parseInt(day_required, 10) || 0, parseInt(night_required, 10) || 0]);
+      INSERT INTO requirements (role_name, day_required, night_required, top_floor_required, ground_floor_required, lower_ground_floor_required)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      role_name.trim(),
+      parseInt(day_required, 10) || 0,
+      parseInt(night_required, 10) || 0,
+      parseInt(top_floor_required, 10) || 0,
+      parseInt(ground_floor_required, 10) || 0,
+      parseInt(lower_ground_floor_required, 10) || 0
+    ]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

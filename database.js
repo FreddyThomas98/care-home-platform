@@ -39,6 +39,12 @@ if (isPostgres) {
       if (empCols.length > 0 && !empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
+      const reqCols = sqliteDb.prepare("PRAGMA table_info(requirements)").all();
+      if (reqCols.length > 0) {
+        if (!reqCols.some(c => c.name === "top_floor_required")) sqliteDb.exec("ALTER TABLE requirements ADD COLUMN top_floor_required INTEGER NOT NULL DEFAULT 0;");
+        if (!reqCols.some(c => c.name === "ground_floor_required")) sqliteDb.exec("ALTER TABLE requirements ADD COLUMN ground_floor_required INTEGER NOT NULL DEFAULT 0;");
+        if (!reqCols.some(c => c.name === "lower_ground_floor_required")) sqliteDb.exec("ALTER TABLE requirements ADD COLUMN lower_ground_floor_required INTEGER NOT NULL DEFAULT 0;");
+      }
     } catch (err) {}
   } catch (e) {
     // Ignore pragma errors if in memory or unsupported
@@ -128,7 +134,10 @@ async function init() {
         id SERIAL PRIMARY KEY,
         role_name VARCHAR(100) UNIQUE NOT NULL,
         day_required INTEGER NOT NULL DEFAULT 0,
-        night_required INTEGER NOT NULL DEFAULT 0
+        night_required INTEGER NOT NULL DEFAULT 0,
+        top_floor_required INTEGER NOT NULL DEFAULT 0,
+        ground_floor_required INTEGER NOT NULL DEFAULT 0,
+        lower_ground_floor_required INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS role_hierarchy (
@@ -145,6 +154,9 @@ async function init() {
       ALTER TABLE role_hierarchy ADD COLUMN IF NOT EXISTS days_per_week INTEGER NOT NULL DEFAULT 7;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS floor VARCHAR(100) DEFAULT '';
       ALTER TABLE preferences ALTER COLUMN target_day TYPE VARCHAR(100);
+      ALTER TABLE requirements ADD COLUMN IF NOT EXISTS top_floor_required INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE requirements ADD COLUMN IF NOT EXISTS ground_floor_required INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE requirements ADD COLUMN IF NOT EXISTS lower_ground_floor_required INTEGER NOT NULL DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS leave_records (
         id SERIAL PRIMARY KEY,
@@ -187,6 +199,20 @@ async function init() {
         rota_json TEXT NOT NULL
       );
     `);
+
+    // Seed baseline floor allocations if uninitialized (all 0)
+    try {
+      const checkReqFloors = await pgPool.query("SELECT SUM(top_floor_required + ground_floor_required + lower_ground_floor_required) as total FROM requirements");
+      const floorSum = parseInt(checkReqFloors.rows && checkReqFloors.rows[0] ? checkReqFloors.rows[0].total : 0, 10) || 0;
+      if (floorSum === 0) {
+        await pgPool.query(`
+          UPDATE requirements SET top_floor_required = 1, ground_floor_required = 1, lower_ground_floor_required = 1 WHERE role_name = 'Staff Nurse';
+          UPDATE requirements SET top_floor_required = 1, ground_floor_required = 0, lower_ground_floor_required = 0 WHERE role_name = 'Advanced Team Leader';
+          UPDATE requirements SET top_floor_required = 3, ground_floor_required = 4, lower_ground_floor_required = 3 WHERE role_name = 'Carer';
+          UPDATE requirements SET top_floor_required = 1, ground_floor_required = 1, lower_ground_floor_required = 1 WHERE role_name = 'Senior Carer';
+        `);
+      }
+    } catch (fErr) {}
 
     // Auto-seed baseline data if the database is freshly created and empty
     const checkEmp = await pgPool.query("SELECT COUNT(*) as cnt FROM employees");
@@ -282,7 +308,10 @@ async function init() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           role_name TEXT UNIQUE NOT NULL,
           day_required INTEGER NOT NULL DEFAULT 0,
-          night_required INTEGER NOT NULL DEFAULT 0
+          night_required INTEGER NOT NULL DEFAULT 0,
+          top_floor_required INTEGER NOT NULL DEFAULT 0,
+          ground_floor_required INTEGER NOT NULL DEFAULT 0,
+          lower_ground_floor_required INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS role_hierarchy (
@@ -347,6 +376,30 @@ async function init() {
       if (!empCols.some(c => c.name === "floor")) {
         sqliteDb.exec("ALTER TABLE employees ADD COLUMN floor TEXT DEFAULT '';");
       }
+
+      const reqCols = sqliteDb.prepare("PRAGMA table_info(requirements)").all();
+      if (!reqCols.some(c => c.name === "top_floor_required")) {
+        sqliteDb.exec("ALTER TABLE requirements ADD COLUMN top_floor_required INTEGER NOT NULL DEFAULT 0;");
+      }
+      if (!reqCols.some(c => c.name === "ground_floor_required")) {
+        sqliteDb.exec("ALTER TABLE requirements ADD COLUMN ground_floor_required INTEGER NOT NULL DEFAULT 0;");
+      }
+      if (!reqCols.some(c => c.name === "lower_ground_floor_required")) {
+        sqliteDb.exec("ALTER TABLE requirements ADD COLUMN lower_ground_floor_required INTEGER NOT NULL DEFAULT 0;");
+      }
+
+      // Seed baseline floor allocations if uninitialized (all 0)
+      try {
+        const sumRow = sqliteDb.prepare("SELECT SUM(top_floor_required + ground_floor_required + lower_ground_floor_required) as total FROM requirements").get();
+        if (!sumRow || !sumRow.total) {
+          sqliteDb.exec(`
+            UPDATE requirements SET top_floor_required = 1, ground_floor_required = 1, lower_ground_floor_required = 1 WHERE role_name = 'Staff Nurse';
+            UPDATE requirements SET top_floor_required = 1, ground_floor_required = 0, lower_ground_floor_required = 0 WHERE role_name = 'Advanced Team Leader';
+            UPDATE requirements SET top_floor_required = 3, ground_floor_required = 4, lower_ground_floor_required = 3 WHERE role_name = 'Carer';
+            UPDATE requirements SET top_floor_required = 1, ground_floor_required = 1, lower_ground_floor_required = 1 WHERE role_name = 'Senior Carer';
+          `);
+        }
+      } catch (fErr) {}
     } catch (e) {
       console.warn("SQLite schema / migration check:", e.message);
     }
