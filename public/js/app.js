@@ -294,7 +294,7 @@ function getRotaWeeks(data) {
   return weeks;
 }
 
-/* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer) */
+/* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer; Team Leader combines TL + Adv. TL) */
 function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = []) {
   const reqList = (requirements && requirements.length > 0)
     ? requirements
@@ -336,31 +336,66 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     }
   }
 
+  // Group Team Leader + Advanced Team Leader under 'Team Leader'
+  const isTLGroup = (rName) => rName === "Team Leader" || rName === "Advanced Team Leader";
+  const hasTL = evaluatedRoleNames.some(isTLGroup);
+  let effectiveRoles = evaluatedRoleNames.filter(r => r !== "Advanced Team Leader");
+  if (hasTL && !effectiveRoles.includes("Team Leader")) {
+    effectiveRoles.push("Team Leader");
+  }
+
   let todayReqDayTotal = 0;
   let todayReqNightTotal = 0;
 
-  evaluatedRoleNames.forEach(roleName => {
-    const reqObj = reqList.find(r => r.role_name === roleName);
-    const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
-    const isDayActive = dIdx < maxDays;
+  effectiveRoles.forEach(roleName => {
+    let reqD = 0;
+    let reqN = 0;
 
-    const reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
-    const reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
+    if (roleName === "Team Leader") {
+      // Team Leader combines Team Leader and Advanced Team Leader using max logic
+      const reqTL = reqList.find(r => r.role_name === "Team Leader");
+      const reqAdTL = reqList.find(r => r.role_name === "Advanced Team Leader");
+      const maxDaysTL = roleDaysMap["Team Leader"] !== undefined ? roleDaysMap["Team Leader"] : 7;
+      const maxDaysAdTL = roleDaysMap["Advanced Team Leader"] !== undefined ? roleDaysMap["Advanced Team Leader"] : 7;
+      const dActiveTL = dIdx < maxDaysTL;
+      const dActiveAdTL = dIdx < maxDaysAdTL;
+
+      const dTL = (reqTL && dActiveTL) ? (reqTL.day_required || 0) : 0;
+      const dAdTL = (reqAdTL && dActiveAdTL) ? (reqAdTL.day_required || 0) : 0;
+      reqD = Math.max(dTL, dAdTL);
+
+      const nTL = (reqTL && dActiveTL) ? (reqTL.night_required || 0) : 0;
+      const nAdTL = (reqAdTL && dActiveAdTL) ? (reqAdTL.night_required || 0) : 0;
+      reqN = Math.max(nTL, nAdTL);
+    } else {
+      const reqObj = reqList.find(r => r.role_name === roleName);
+      const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
+      const isDayActive = dIdx < maxDays;
+      reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
+      reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
+    }
 
     todayReqDayTotal += reqD;
     todayReqNightTotal += reqN;
+
+    const matchesRole = (r) => {
+      if (roleName === "Team Leader") {
+        return isTLGroup(r.coveringRole) || isTLGroup(r.designation);
+      }
+      return r.coveringRole === roleName || r.designation === roleName;
+    };
 
     const allottedD = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "D" &&
       r.status !== "TR" &&
-      (r.coveringRole === roleName || r.designation === roleName)
+      matchesRole(r)
     ).length;
 
     const allottedN = (rota || []).filter(r =>
       r.date === d.dateString &&
       r.shift === "N" &&
-      (r.coveringRole === roleName || r.designation === roleName)
+      matchesRole(r)
     ).length;
 
     let rShort = 0;
@@ -431,25 +466,28 @@ function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balance
   let hasRequirements = false;
 
   if (targetFloor === "Top Floor") {
-    // 1. Top Floor Pooled Lead Rule: Staff Nurse or Advanced Team Leader (Target = 1)
+    // 1. Top Floor Pooled Lead Rule: Staff Nurse or Team Leader / Adv. Team Leader (Target = Math.max(snReq, tlReq, adtlReq) || 1)
     const snReqObj = reqList.find(r => r.role_name === "Staff Nurse");
+    const tlReqObj = reqList.find(r => r.role_name === "Team Leader");
     const adtlReqObj = reqList.find(r => r.role_name === "Advanced Team Leader");
     const snReq = (snReqObj && snReqObj.top_floor_required) ? snReqObj.top_floor_required : 0;
+    const tlReq = (tlReqObj && tlReqObj.top_floor_required) ? tlReqObj.top_floor_required : 0;
     const adtlReq = (adtlReqObj && adtlReqObj.top_floor_required) ? adtlReqObj.top_floor_required : 0;
-    const leadReq = Math.max(1, snReq, adtlReq, (snReq + adtlReq));
+    // Uses max logic so setting 1 on any of them targets 1 (never adds up to 2!)
+    const leadReq = Math.max(snReq, tlReq, adtlReq) || 1;
 
     if (leadReq > 0) {
       hasRequirements = true;
       const allottedLeads = allottedOnFloor.filter(r =>
         r.coveringRole === "Staff Nurse" || r.designation === "Staff Nurse" ||
-        r.coveringRole === "Advanced Team Leader" || r.designation === "Advanced Team Leader" ||
-        r.coveringRole === "Team Leader" || r.designation === "Team Leader"
+        r.coveringRole === "Team Leader" || r.designation === "Team Leader" ||
+        r.coveringRole === "Advanced Team Leader" || r.designation === "Advanced Team Leader"
       ).length;
 
       const sLead = Math.max(0, leadReq - allottedLeads);
       const oLead = Math.max(0, allottedLeads - leadReq);
-      if (sLead > 0) shortRoles.push({ role: "SN / AdTL", shortage: sLead });
-      if (oLead > 0) overRoles.push({ role: "SN / AdTL", overstaffed: oLead });
+      if (sLead > 0) shortRoles.push({ role: "SN / TL", shortage: sLead });
+      if (oLead > 0) overRoles.push({ role: "SN / TL", overstaffed: oLead });
     }
 
     // 2. Carers on Top Floor
@@ -484,10 +522,26 @@ function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balance
     });
   } else if (targetFloor === "Ground Floor") {
     reqList.forEach(r => {
-      const q = r.ground_floor_required || 0;
+      if (r.role_name === "Advanced Team Leader") return; // Combined into Team Leader
+      let q = 0;
+      if (r.role_name === "Team Leader") {
+        const adtl = reqList.find(item => item.role_name === "Advanced Team Leader");
+        const qTL = r.ground_floor_required || 0;
+        const qAdTL = (adtl && adtl.ground_floor_required) || 0;
+        q = Math.max(qTL, qAdTL);
+      } else {
+        q = r.ground_floor_required || 0;
+      }
       if (q > 0) {
         hasRequirements = true;
-        const alltd = allottedOnFloor.filter(item => item.coveringRole === r.role_name || item.designation === r.role_name).length;
+        const isMatch = (item) => {
+          if (r.role_name === "Team Leader") {
+            return item.coveringRole === "Team Leader" || item.designation === "Team Leader" ||
+                   item.coveringRole === "Advanced Team Leader" || item.designation === "Advanced Team Leader";
+          }
+          return item.coveringRole === r.role_name || item.designation === r.role_name;
+        };
+        const alltd = allottedOnFloor.filter(isMatch).length;
         const s = Math.max(0, q - alltd);
         const o = Math.max(0, alltd - q);
         if (s > 0) shortRoles.push({ role: r.role_name, shortage: s });
@@ -496,10 +550,26 @@ function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balance
     });
   } else if (targetFloor === "Lower Ground Floor") {
     reqList.forEach(r => {
-      const q = r.lower_ground_floor_required || 0;
+      if (r.role_name === "Advanced Team Leader") return; // Combined into Team Leader
+      let q = 0;
+      if (r.role_name === "Team Leader") {
+        const adtl = reqList.find(item => item.role_name === "Advanced Team Leader");
+        const qTL = r.lower_ground_floor_required || 0;
+        const qAdTL = (adtl && adtl.lower_ground_floor_required) || 0;
+        q = Math.max(qTL, qAdTL);
+      } else {
+        q = r.lower_ground_floor_required || 0;
+      }
       if (q > 0) {
         hasRequirements = true;
-        const alltd = allottedOnFloor.filter(item => item.coveringRole === r.role_name || item.designation === r.role_name).length;
+        const isMatch = (item) => {
+          if (r.role_name === "Team Leader") {
+            return item.coveringRole === "Team Leader" || item.designation === "Team Leader" ||
+                   item.coveringRole === "Advanced Team Leader" || item.designation === "Advanced Team Leader";
+          }
+          return item.coveringRole === r.role_name || item.designation === r.role_name;
+        };
+        const alltd = allottedOnFloor.filter(isMatch).length;
         const s = Math.max(0, q - alltd);
         const o = Math.max(0, alltd - q);
         if (s > 0) shortRoles.push({ role: r.role_name, shortage: s });
@@ -4217,7 +4287,11 @@ async function renderRequirementsView() {
                   <td><strong>${esc(r.role_name)}</strong></td>
                   <td style="text-align:center; font-weight:700; color:#0f172a; font-size:15px;">${r.day_required || 0}</td>
                   <td style="text-align:center; font-weight:700; color:#1e1b4b; font-size:15px;">${r.night_required || 0}</td>
-                  <td style="text-align:center; font-weight:700; color:#0369a1; font-size:14px; background:#f0f9ff;">${r.top_floor_required || 0}</td>
+                  <td style="text-align:center; font-weight:700; color:#0369a1; font-size:14px; background:#f0f9ff;">
+                    ${r.top_floor_required || 0}
+                    ${r.role_name === 'Staff Nurse' ? '<div style="font-size:9.5px; font-weight:800; color:#0284c7; margin-top:1px;">(Shared SN/TL)</div>' : ''}
+                    ${r.role_name === 'Advanced Team Leader' ? '<div style="font-size:9.5px; font-weight:800; color:#0284c7; margin-top:1px;">(Shared SN/TL)</div>' : ''}
+                  </td>
                   <td style="text-align:center; font-weight:700; color:#15803d; font-size:14px; background:#f0fdf4;">${r.ground_floor_required || 0}</td>
                   <td style="text-align:center; font-weight:700; color:#92400e; font-size:14px; background:#fefce8;">${r.lower_ground_floor_required || 0}</td>
                   <td style="text-align:right;">
