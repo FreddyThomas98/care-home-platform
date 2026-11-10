@@ -55,23 +55,31 @@ async function apiFetch(endpoint, options = {}) {
 }
 
 // Staff Sorting & Floor Grouping Helpers
-function getStaffRolePriority(st, rolePriorityMap) {
-  const role = st.designation || "";
+function getRolePriority(role, rolePriorityMap) {
   if (rolePriorityMap && rolePriorityMap[role] !== undefined) {
     return rolePriorityMap[role];
   }
-  const lower = role.toLowerCase();
-  if (lower.includes("manager")) return 1;
-  if (lower.includes("clinical lead") || lower.includes("advanced")) return 2;
+  if (typeof currentRotaData !== "undefined" && currentRotaData && currentRotaData.rolePriorityMap && currentRotaData.rolePriorityMap[role] !== undefined) {
+    return currentRotaData.rolePriorityMap[role];
+  }
+  const lower = (role || "").toLowerCase();
+  if (lower.includes("clinical lead")) return 1;
+  if (lower.includes("staff nurse") || lower.includes("nurse")) return 2;
   if (lower.includes("team leader")) return 3;
-  if (lower.includes("nurse")) return 4;
-  if (lower.includes("senior carer")) return 5;
-  if (lower.includes("carer")) return 6;
-  if (lower.includes("physio")) return 7;
+  if (lower.includes("senior carer")) return 4;
+  if (lower.includes("carer")) return 5;
+  if (lower.includes("dy. manager") || lower.includes("manager")) return 6;
+  if (lower.includes("advanced team leader") || lower.includes("adv")) return 7;
   if (lower.includes("wellbeing") || lower.includes("activities")) return 8;
   if (lower.includes("hostes")) return 9;
   if (lower.includes("maint")) return 10;
+  if (lower.includes("physio")) return 11;
   return 100;
+}
+
+function getStaffRolePriority(st, rolePriorityMap) {
+  const role = st.designation || "";
+  return getRolePriority(role, rolePriorityMap);
 }
 
 function sortStaffByPriority(staffList, rolePriorityMap) {
@@ -389,6 +397,11 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     }
   });
 
+  // Sort shortage and overstaffing roles by role hierarchy priority
+  const getPrio = (roleName) => getRolePriority(roleName, (currentRotaData && currentRotaData.rolePriorityMap) ? currentRotaData.rolePriorityMap : null);
+  shortRoles.sort((a, b) => getPrio(a.role) - getPrio(b.role));
+  overRoles.sort((a, b) => getPrio(a.role) - getPrio(b.role));
+
   const totalShort = shortRoles.reduce((sum, r) => sum + r.shortage, 0);
   const totalOver = overRoles.reduce((sum, r) => sum + r.overstaffed, 0);
   const shortSummary = shortRoles.map(r => `-${r.shortage} ${r.role}`).join(', ');
@@ -540,6 +553,12 @@ function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balance
       }
     });
   }
+
+  // Sort roles by role hierarchy priority
+  const getFloorRolePrio = (roleName) => getRolePriority(roleName, (currentRotaData && currentRotaData.rolePriorityMap) ? currentRotaData.rolePriorityMap : null);
+  shortRoles.sort((a, b) => getFloorRolePrio(a.role) - getFloorRolePrio(b.role));
+  overRoles.sort((a, b) => getFloorRolePrio(a.role) - getFloorRolePrio(b.role));
+  roleStats.sort((a, b) => getFloorRolePrio(a.role) - getFloorRolePrio(b.role));
 
   const totalShort = shortRoles.reduce((sum, r) => sum + r.shortage, 0);
   const totalOver = overRoles.reduce((sum, r) => sum + r.overstaffed, 0);
@@ -713,8 +732,10 @@ async function renderRotaView() {
           <div class="shift-legend-group">
             <div class="legend-item"><span class="status-pill status-D">D</span> Day Shift</div>
             <div class="legend-item"><span class="status-pill status-N">N</span> Night Shift</div>
-            <div class="legend-item"><span class="status-pill status-OFF">OFF</span> Off Duty</div>
-            <div class="legend-item"><span class="status-pill status-L">L</span> Approved Leave</div>
+            <div class="legend-item"><span class="status-pill status-AL">AL</span> Annual Leave</div>
+            <div class="legend-item"><span class="status-pill status-SL">SL</span> Sick Leave</div>
+            <div class="legend-item"><span class="status-pill status-ML">ML</span> Maternity Leave</div>
+            <div class="legend-item"><span class="status-pill status-CL">CL</span> Compassionate</div>
             <div class="legend-item"><span class="status-pill status-TR">TR</span> Training</div>
           </div>
         </div>
@@ -853,6 +874,9 @@ async function renderRotaView() {
                             ${days.map(d => {
               const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
               const status = rec ? rec.status : "OFF";
+              if (status === "OFF" || !status) {
+                return `<td style="text-align:center;"></td>`;
+              }
               return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
             }).join('')}
                             <td style="text-align:center; color:#94a3b8; font-weight:bold; cursor:pointer;" title="Staff options">⋮</td>
@@ -992,6 +1016,9 @@ async function renderRotaView() {
                         ${days.map(d => {
             const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
             const status = rec ? rec.status : "OFF";
+            if (status === "OFF" || !status) {
+              return `<td style="text-align:center;"></td>`;
+            }
             return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
           }).join('')}
                         <td style="text-align:center; color:#94a3b8; font-weight:bold; cursor:pointer;" title="Staff options">⋮</td>
@@ -1217,8 +1244,10 @@ function renderMonthlyMatrixHtml(data) {
           <span style="border-left:1px solid #cbd5e1; height:16px;"></span>
           <span><span class="status-pill status-D">D</span> Day</span>
           <span><span class="status-pill status-N">N</span> Night</span>
-          <span><span class="status-pill status-OFF">OFF</span> Off</span>
-          <span><span class="status-pill status-L">L</span> Leave</span>
+          <span><span class="status-pill status-AL">AL</span> Annual</span>
+          <span><span class="status-pill status-SL">SL</span> Sick</span>
+          <span><span class="status-pill status-ML">ML</span> Maternity</span>
+          <span><span class="status-pill status-CL">CL</span> Compassionate</span>
           <span><span class="status-pill status-TR">TR</span> Training</span>
         </div>
       </div>
@@ -1305,10 +1334,12 @@ function renderMonthlyMatrixHtml(data) {
         const status = rec ? rec.status : "OFF";
         const isWkStart = idx % 7 === 0;
 
-        let pill = `<span style="color:#cbd5e1; font-size:11px;">—</span>`;
+        let pill = "";
         if (status === "D") pill = `<span class="status-pill status-D" style="padding:2px 4px; font-size:10px;">D</span>`;
         else if (status === "N") pill = `<span class="status-pill status-N" style="padding:2px 4px; font-size:10px;">N</span>`;
-        else if (status === "L") pill = `<span class="status-pill status-L" style="padding:2px 4px; font-size:10px;" title="Leave">L</span>`;
+        else if (status === "L" || status === "AL" || status === "SL" || status === "ML" || status === "CL") {
+          pill = `<span class="status-pill status-${status}" style="padding:2px 4px; font-size:10px;" title="${status} Leave">${status}</span>`;
+        }
         else if (status === "TR") pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="Training">TR</span>`;
 
         return `
@@ -2521,6 +2552,13 @@ function renderShortageManagementView() {
   const container = document.getElementById("viewContainer");
   if (!container) return;
 
+  // Preserve scroll position of shortage table viewport & window across re-renders
+  const prevViewport = container.querySelector(".shortage-table-viewport");
+  const savedScrollTop = prevViewport ? prevViewport.scrollTop : 0;
+  const savedScrollLeft = prevViewport ? prevViewport.scrollLeft : 0;
+  const savedWinScrollY = window.scrollY;
+  const savedWinScrollX = window.scrollX;
+
   if (!currentRotaData) {
     container.innerHTML = `
       <div class="card" style="text-align:center; padding:48px 20px;">
@@ -2950,7 +2988,7 @@ function renderShortageManagementView() {
         const rec = workingRota.find(r => String(r.employeeId) === String(st.employeeId) && r.date === d.dateString);
         const status = rec ? rec.status : "OFF";
         const isWorking = status === "D" || status === "N";
-        const isLocked = status === "L" || status === "TR";
+        const isLocked = status === "TR" || status === "L" || status === "AL" || status === "SL" || status === "ML" || status === "CL";
 
         if (isWorking) {
           return `
@@ -2967,20 +3005,19 @@ function renderShortageManagementView() {
         } else if (isLocked) {
           return `
                           <td style="text-align:center; padding:4px 3px; border-right:1px solid #f1f5f9; vertical-align:middle;">
-                            <span class="status-pill status-${status}" style="font-size:11px;" title="${status === 'L' ? 'Approved Annual Leave (Locked)' : 'Mandatory Training (Locked)'}">
+                            <span class="status-pill status-${status}" style="font-size:11px;" title="${status === 'TR' ? 'Mandatory Training (Locked)' : 'Approved Leave (Locked)'}">
                               ${status}
                             </span>
                           </td>
                         `;
         } else {
-          // OFF Drop Target Cell
+          // OFF Drop Target Cell (blank, no OFF label)
           return `
                           <td style="text-align:center; padding:3px 2px; border-right:1px solid #f1f5f9; vertical-align:middle;">
                             <div class="drop-target-cell"
                                  ondragover="handleShiftDragOver(event)"
                                  ondragleave="handleShiftDragLeave(event)"
                                  ondrop="handleShiftDrop(event, '${st.employeeId}', '${d.dateString}')">
-                              <span class="status-pill status-OFF" style="opacity:0.35; font-size:11px;">OFF</span>
                             </div>
                           </td>
                         `;
@@ -2998,6 +3035,14 @@ function renderShortageManagementView() {
   `;
 
   container.innerHTML = content;
+
+  // Restore table viewport scroll position and window scroll
+  const newViewport = container.querySelector(".shortage-table-viewport");
+  if (newViewport) {
+    newViewport.scrollTop = savedScrollTop;
+    newViewport.scrollLeft = savedScrollLeft;
+  }
+  window.scrollTo(savedWinScrollX, savedWinScrollY);
 
   if (openSlicerMenuId) {
     const el = document.getElementById(openSlicerMenuId);
@@ -3039,10 +3084,10 @@ async function exportRotaToExcel() {
 
       const applyHeaderStyle = (row, bgColor = "FF0B3542", fontColor = "FFFFFFFF") => {
         row.height = 26;
-        row.eachCell((cell) => {
+        row.eachCell((cell, colNumber) => {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: fontColor } };
-          cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 2 ? 'left' : 'center', wrapText: true };
           cell.border = {
             top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
             left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
@@ -3073,12 +3118,20 @@ async function exportRotaToExcel() {
           } else if (val === 'N') {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E1B4B' } };
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FFFFFFFF' } };
-          } else if (val === 'OFF') {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-            cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: 'FF94A3B8' } };
-          } else if (val === 'L') {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
-            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF991B1B' } };
+          } else if (val === 'OFF' || val === '') {
+            cell.value = '';
+          } else if (val === 'L' || val === 'AL') {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE7F3' } };
+            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF9D174D' } };
+          } else if (val === 'SL') {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEDD5' } };
+            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF9A3412' } };
+          } else if (val === 'ML') {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
+            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF6B21A8' } };
+          } else if (val === 'CL') {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2FE' } };
+            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0369A1' } };
           } else if (val === 'TR') {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF1E40AF' } };
@@ -3088,7 +3141,7 @@ async function exportRotaToExcel() {
 
       if (rotaSubView === "weekly") {
         // 8 Separate Sheets: Week 1 - Day, Week 1 - Night, Week 2 - Day, Week 2 - Night, etc.
-        const staffList = [...balances].sort((a, b) => a.designation.localeCompare(b.designation) || a.employeeName.localeCompare(b.employeeName));
+        const staffList = sortStaffByPriority(balances, currentRotaData.rolePriorityMap);
 
         weeks.forEach(w => {
           // 1. DAY SHIFT SHEET FOR THIS WEEK
@@ -3097,7 +3150,7 @@ async function exportRotaToExcel() {
           // Title banner
           wsDay.mergeCells('A1:K1');
           const titleCellDay = wsDay.getCell('A1');
-          titleCellDay.value = `CARE HOME ROTA — WEEK ${w.num} DAY SHIFT SCHEDULE (${w.days[0].dateString} to ${w.days[6].dateString})`;
+          titleCellDay.value = `CARE HOME ROTA — WEEK ${w.num} DAY SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[6].dateString)})`;
           titleCellDay.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3542' } };
           titleCellDay.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
           titleCellDay.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3161,7 +3214,7 @@ async function exportRotaToExcel() {
                 const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
                 const s = rec ? rec.status : "OFF";
                 if (s === "D") dayShiftsWorked++;
-                return s;
+                return s === "OFF" ? "" : s;
               });
 
               const row = wsDay.addRow([
@@ -3208,7 +3261,7 @@ async function exportRotaToExcel() {
           // Title banner
           wsNight.mergeCells('A1:K1');
           const titleCellNight = wsNight.getCell('A1');
-          titleCellNight.value = `CARE HOME ROTA — WEEK ${w.num} NIGHT SHIFT SCHEDULE (${w.days[0].dateString} to ${w.days[6].dateString})`;
+          titleCellNight.value = `CARE HOME ROTA — WEEK ${w.num} NIGHT SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[6].dateString)})`;
           titleCellNight.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E1B4B' } };
           titleCellNight.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
           titleCellNight.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3259,7 +3312,7 @@ async function exportRotaToExcel() {
               const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
               const s = rec ? rec.status : "OFF";
               if (s === "N") nightShiftsWorked++;
-              return s;
+              return s === "OFF" ? "" : s;
             });
 
             const row = wsNight.addRow([
@@ -3309,7 +3362,7 @@ async function exportRotaToExcel() {
 
         ws.mergeCells('A1:AI1');
         const titleCell = ws.getCell('A1');
-        titleCell.value = `CARE HOME ROTA — STAFF-WISE 28-DAY MONTHLY MATRIX (${periodLabel})`;
+        titleCell.value = `CARE HOME ROTA — STAFF-WISE 28-DAY MONTHLY MATRIX (${formatShortDate(calendarDays[0].dateString)} – ${formatShortDate(calendarDays[calendarDays.length - 1].dateString)})`;
         titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3542' } };
         titleCell.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
         titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3342,7 +3395,7 @@ async function exportRotaToExcel() {
           { width: 24 }
         ];
 
-        const staffList = [...balances];
+        const staffList = sortStaffByPriority(balances, currentRotaData.rolePriorityMap);
         let mRowIdx = 0;
         groupStaffByFloor(staffList, currentRotaData.rolePriorityMap).forEach(grp => {
           if (grp.staff.length === 0) return;
@@ -3364,7 +3417,7 @@ async function exportRotaToExcel() {
               const s = rec ? rec.status : "OFF";
               if (s === "D") dayCount++;
               if (s === "N") nightCount++;
-              return s;
+              return s === "OFF" ? "" : s;
             });
 
             const row = ws.addRow([
@@ -3393,7 +3446,7 @@ async function exportRotaToExcel() {
 
         ws.mergeCells('A1:L1');
         const titleCell = ws.getCell('A1');
-        titleCell.value = `CARE HOME ROTA — CONTRACT HOURS & BALANCES SUMMARY (${periodLabel})`;
+        titleCell.value = `CARE HOME ROTA — CONTRACT HOURS & BALANCES SUMMARY (${formatShortDate(calendarDays[0].dateString)} – ${formatShortDate(calendarDays[calendarDays.length - 1].dateString)})`;
         titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3542' } };
         titleCell.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
         titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3435,7 +3488,7 @@ async function exportRotaToExcel() {
         let totalWorked = 0;
         let totalLeave = 0;
 
-        balances.forEach((b, idx) => {
+        sortStaffByPriority(balances, currentRotaData.rolePriorityMap).forEach((b, idx) => {
           totalTarget += b.contractHours;
           totalWorked += b.floorHoursWorked;
           totalLeave += b.leaveDedHours;
@@ -3458,7 +3511,7 @@ async function exportRotaToExcel() {
         });
 
         const totalRow = ws.addRow([
-          "TOTALS (All 61 Staff)",
+          "TOTALS (All Staff)",
           "All Roles",
           `${totalTarget}h Target`,
           "",
@@ -3492,7 +3545,7 @@ async function exportRotaToExcel() {
   const wb = XLSX.utils.book_new();
 
   if (rotaSubView === "weekly") {
-    const staffList = [...balances];
+    const staffList = sortStaffByPriority(balances, currentRotaData.rolePriorityMap);
 
     weeks.forEach(w => {
       // 1. Day Sheet
@@ -3509,8 +3562,8 @@ async function exportRotaToExcel() {
         if (grp.staff.length === 0) return;
         if (grp.showHeader) {
           dayRows.push({
-            "Staff Name": `--- ${grp.label} ---`,
-            "Role": `${grp.staff.length} Staff`,
+            "Staff Name": grp.label,
+            "Role": "",
             "Contract Target": ""
           });
         }
@@ -3525,7 +3578,7 @@ async function exportRotaToExcel() {
             const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
             const s = rec ? rec.status : "OFF";
             if (s === "D") dayShiftsWorked++;
-            row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s;
+            row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : s;
           });
           row["Day Shifts Worked"] = dayShiftsWorked;
           dayRows.push(row);
@@ -3555,7 +3608,7 @@ async function exportRotaToExcel() {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
           const s = rec ? rec.status : "OFF";
           if (s === "N") nightShiftsWorked++;
-          row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s;
+          row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : s;
         });
         row["Night Shifts Worked"] = nightShiftsWorked;
         return row;
@@ -3572,8 +3625,8 @@ async function exportRotaToExcel() {
       if (grp.staff.length === 0) return;
       if (grp.showHeader) {
         rows.push({
-          "Staff Name": `--- ${grp.label} ---`,
-          "Role": `${grp.staff.length} Staff`,
+          "Staff Name": grp.label,
+          "Role": "",
           "Contract Target": ""
         });
       }
@@ -3585,7 +3638,8 @@ async function exportRotaToExcel() {
         };
         calendarDays.forEach(d => {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
-          row[`${d.dayName.substring(0, 3)} ${formatShortDate(d.dateString)}`] = rec ? rec.status : "OFF";
+          const s = rec ? rec.status : "OFF";
+          row[`${d.dayName.substring(0, 3)} ${formatShortDate(d.dateString)}`] = s === "OFF" ? "" : s;
         });
         row["Floor Shifts Worked"] = st.floorShiftsWorked;
         row["Floor Hours Worked"] = `${st.floorHoursWorked}h`;
@@ -3598,7 +3652,7 @@ async function exportRotaToExcel() {
     XLSX.writeFile(wb, `CareHome_Staff_Monthly_Matrix_${safePeriod}.xlsx`);
 
   } else {
-    const rows = balances.map(b => ({
+    const rows = sortStaffByPriority(balances, currentRotaData.rolePriorityMap).map(b => ({
       "Staff Name": b.employeeName,
       "Role": b.designation,
       "Contract Hours": `${b.contractHours}h`,
@@ -3631,7 +3685,7 @@ function preparePrintContainer() {
   const weeks = getRotaWeeks(currentRotaData);
   const periodLabel = currentRotaData.periodLabel || "Cycle";
   const dailyRequiredTotals = currentRotaData.dailyRequiredTotals || { day: 16, night: 10 };
-  const staffList = [...balances].sort((a, b) => a.designation.localeCompare(b.designation) || a.employeeName.localeCompare(b.employeeName));
+  const staffList = sortStaffByPriority(balances, currentRotaData.rolePriorityMap);
 
   let html = "";
   weeks.forEach(w => {
@@ -3657,21 +3711,18 @@ function preparePrintContainer() {
         <div class="print-sheet-header">
           <div>
             <div class="print-sheet-title">CARE HOME ROTA &bull; WEEK ${w.num} DAY SHIFT SCHEDULE</div>
-            <div class="print-sheet-period">Cycle Period: ${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)} (${periodLabel})</div>
-          </div>
-          <div style="font-size:9pt; font-weight:700; color:#0b3542; text-align:right;">
-            DAY STAFF: ${dayStaff.length} &bull; DAY REQ: ${dailyRequiredTotals.day}/DAY
+            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)}</div>
           </div>
         </div>
 
         <table class="print-table">
           <thead>
             <tr>
-              <th class="th-left" style="width:26%;">Staff Name</th>
-              <th class="th-left" style="width:16%;">Role</th>
-              <th style="width:14%;">Contract Hours</th>
+              <th class="th-left" style="width:26%; text-align:left;">Staff Name</th>
+              <th class="th-left" style="width:16%; text-align:left;">Role</th>
+              <th style="width:14%; text-align:center;">Contract Hours</th>
               ${w.days.map(d => `
-                <th style="width:6.3%;">
+                <th style="width:6.3%; text-align:center;">
                   ${d.dayName.substring(0, 3)}<br>
                   <small>${formatShortDate(d.dateString)}</small>
                 </th>
@@ -3684,22 +3735,25 @@ function preparePrintContainer() {
       return `
                 ${grp.showHeader ? `
                   <tr style="background:#e2e8f0; font-weight:800; font-size:9pt; color:#0f172a; border-top:1.5px solid #cbd5e1; border-bottom:1px solid #cbd5e1;">
-                    <td colspan="${3 + w.days.length}" style="padding:4px 8px;">
-                      ${grp.label} &bull; ${grp.staff.length} Active Staff
+                    <td colspan="${3 + w.days.length}" style="padding:4px 8px; text-align:left;">
+                      ${grp.label}
                     </td>
                   </tr>
                 ` : ''}
                 ${grp.staff.map(st => {
         return `
                     <tr>
-                      <td>
+                      <td style="text-align:left;">
                         <strong>${esc(st.employeeName)}</strong>
                       </td>
-                      <td>${esc(st.designation)}</td>
+                      <td style="text-align:left;">${esc(st.designation)}</td>
                       <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
                       ${w.days.map(d => {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
           const status = rec ? rec.status : "OFF";
+          if (status === "OFF" || !status) {
+            return `<td style="text-align:center;"></td>`;
+          }
           return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
         }).join('')}
                     </tr>
@@ -3731,21 +3785,18 @@ function preparePrintContainer() {
         <div class="print-sheet-header">
           <div>
             <div class="print-sheet-title">CARE HOME ROTA &bull; WEEK ${w.num} NIGHT SHIFT SCHEDULE</div>
-            <div class="print-sheet-period">Cycle Period: ${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)} (${periodLabel})</div>
-          </div>
-          <div style="font-size:9pt; font-weight:700; color:#1e1b4b; text-align:right;">
-            NIGHT STAFF: ${nightStaff.length} &bull; NIGHT REQ: ${dailyRequiredTotals.night}/DAY
+            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)}</div>
           </div>
         </div>
 
         <table class="print-table">
           <thead>
             <tr>
-              <th class="th-left" style="width:26%;">Staff Name</th>
-              <th class="th-left" style="width:16%;">Role</th>
-              <th style="width:14%;">Contract Hours</th>
+              <th class="th-left" style="width:26%; text-align:left;">Staff Name</th>
+              <th class="th-left" style="width:16%; text-align:left;">Role</th>
+              <th style="width:14%; text-align:center;">Contract Hours</th>
               ${w.days.map(d => `
-                <th style="width:6.3%;">
+                <th style="width:6.3%; text-align:center;">
                   ${d.dayName.substring(0, 3)}<br>
                   <small>${formatShortDate(d.dateString)}</small>
                 </th>
@@ -3756,12 +3807,15 @@ function preparePrintContainer() {
             ${sortStaffByPriority(nightStaff, currentRotaData.rolePriorityMap).map(st => {
       return `
                 <tr>
-                  <td><strong>${esc(st.employeeName)}</strong></td>
-                  <td>${esc(st.designation)}</td>
+                  <td style="text-align:left;"><strong>${esc(st.employeeName)}</strong></td>
+                  <td style="text-align:left;">${esc(st.designation)}</td>
                   <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
                   ${w.days.map(d => {
         const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
         const status = rec ? rec.status : "OFF";
+        if (status === "OFF" || !status) {
+          return `<td style="text-align:center;"></td>`;
+        }
         return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
       }).join('')}
                 </tr>
@@ -4635,6 +4689,7 @@ async function openLeaveModal() {
               <select id="leaveType" class="form-control">
                 <option value="Annual Leave">Annual Leave</option>
                 <option value="Sick Leave">Sick Leave</option>
+                <option value="Maternity Leave">Maternity Leave</option>
                 <option value="Compassionate">Compassionate</option>
               </select>
             </div>

@@ -674,6 +674,24 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
     rotaData.requirements = await db.queryAll("SELECT * FROM requirements ORDER BY id ASC");
     rotaData.roleHierarchy = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
 
+    // Build rolePriorityMap directly from role_hierarchy
+    const rolePriorityMap = {};
+    (rotaData.roleHierarchy || []).forEach(h => {
+      rolePriorityMap[h.required_role] = parseInt(h.priority, 10);
+    });
+    rotaData.rolePriorityMap = rolePriorityMap;
+
+    // Fetch approved leaves to synchronize specific leave codes (AL, SL, ML, CL)
+    const approvedLeaves = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
+    const getLeaveCode = (type) => {
+      if (!type) return "AL";
+      const lt = type.trim().toLowerCase();
+      if (lt.includes("sick")) return "SL";
+      if (lt.includes("maternity")) return "ML";
+      if (lt.includes("compassionate")) return "CL";
+      return "AL";
+    };
+
     // Synchronize active rota balances and shift assignments with live employee roster
     const liveEmployees = await db.queryAll("SELECT * FROM employees");
     const empMap = {};
@@ -700,6 +718,15 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
         r.employeeName = live.name;
         r.designation = live.designation;
         r.floor = (live.floor || "").trim();
+      }
+      // If employee is on approved leave for this date, map exact code
+      const matchLeave = approvedLeaves.find(l => String(l.employee_id) === String(r.employeeId) && r.date >= l.start_date && r.date <= l.end_date);
+      if (matchLeave) {
+        r.status = getLeaveCode(matchLeave.leave_type);
+        r.shift = "OFF";
+      } else if (r.status === "L") {
+        r.status = "AL";
+        r.shift = "OFF";
       }
     });
 

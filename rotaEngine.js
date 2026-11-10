@@ -38,6 +38,20 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     "maintance staff": 10, "maintenance": 10
   };
 
+  function getLeaveCode(leaveType) {
+    if (!leaveType) return "AL";
+    const lt = leaveType.trim().toLowerCase();
+    if (lt.includes("sick")) return "SL";
+    if (lt.includes("maternity")) return "ML";
+    if (lt.includes("compassionate")) return "CL";
+    if (lt.includes("annual")) return "AL";
+    return "AL";
+  }
+
+  function isLeaveStatus(status) {
+    return status === "L" || status === "AL" || status === "SL" || status === "ML" || status === "CL";
+  }
+
   function getRoleRank(r) {
     if (!r) return 999;
     const lower = String(r).trim().toLowerCase();
@@ -230,11 +244,15 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
 
       if (leaveDaysInWeek.length === 1) {
         // Single day leave: exactly on that day
-        state.assignedShifts[leaveDaysInWeek[0].dateString] = {
+        const day = leaveDaysInWeek[0];
+        const matchingLeave = empLeaves.find(l => day.dateString >= l.start_date && day.dateString <= l.end_date);
+        const lCode = getLeaveCode(matchingLeave ? matchingLeave.leave_type : "Annual Leave");
+        state.assignedShifts[day.dateString] = {
           shift: "OFF",
-          status: "L",
+          status: lCode,
           coveringRole: "",
-          isLeave: true
+          isLeave: true,
+          leaveType: matchingLeave ? matchingLeave.leave_type : "Annual Leave"
         };
       } else {
         // Multi-day / long leave: record leave up to weekly contracted shifts
@@ -242,11 +260,14 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
 
         if (leaveDaysInWeek.length <= targetShifts) {
           leaveDaysInWeek.forEach(day => {
+            const matchingLeave = empLeaves.find(l => day.dateString >= l.start_date && day.dateString <= l.end_date);
+            const lCode = getLeaveCode(matchingLeave ? matchingLeave.leave_type : "Annual Leave");
             state.assignedShifts[day.dateString] = {
               shift: "OFF",
-              status: "L",
+              status: lCode,
               coveringRole: "",
-              isLeave: true
+              isLeave: true,
+              leaveType: matchingLeave ? matchingLeave.leave_type : "Annual Leave"
             };
           });
         } else {
@@ -261,21 +282,25 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             return isWkA - isWkB;
           });
 
-          // Allotted up to targetShifts as "L", remainder as "OFF" (protected from work)
+          // Allotted up to targetShifts as leave, remainder as "OFF" (protected from work)
           sorted.forEach((day, idx) => {
+            const matchingLeave = empLeaves.find(l => day.dateString >= l.start_date && day.dateString <= l.end_date);
+            const lCode = getLeaveCode(matchingLeave ? matchingLeave.leave_type : "Annual Leave");
             if (idx < targetShifts) {
               state.assignedShifts[day.dateString] = {
                 shift: "OFF",
-                status: "L",
+                status: lCode,
                 coveringRole: "",
-                isLeave: true
+                isLeave: true,
+                leaveType: matchingLeave ? matchingLeave.leave_type : "Annual Leave"
               };
             } else {
               state.assignedShifts[day.dateString] = {
                 shift: "OFF",
                 status: "OFF",
                 coveringRole: "",
-                leaveProtected: true
+                leaveProtected: true,
+                leaveType: matchingLeave ? matchingLeave.leave_type : "Annual Leave"
               };
             }
           });
@@ -288,7 +313,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   trainingList.forEach(t => {
     const state = empState[t.employee_id];
     if (state && t.training_date) {
-      if (!state.assignedShifts[t.training_date] || state.assignedShifts[t.training_date].status !== "L") {
+      if (!state.assignedShifts[t.training_date] || !isLeaveStatus(state.assignedShifts[t.training_date].status)) {
         state.assignedShifts[t.training_date] = {
           shift: "D",
           status: "TR",
@@ -309,7 +334,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       if (tIdx > 0) {
         const prevDayStr = calendarDays[tIdx - 1].dateString;
         const curAsgn = state.assignedShifts[prevDayStr];
-        if (!curAsgn || curAsgn.status !== "L") {
+        if (!curAsgn || !isLeaveStatus(curAsgn.status)) {
           state.assignedShifts[prevDayStr] = {
             shift: "OFF",
             status: "OFF",
@@ -354,7 +379,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       let leaveCount = 0;
       weekDays.forEach(d => {
         const asgn = state.assignedShifts[d.dateString];
-        if (asgn && asgn.status === "L") leaveCount++;
+        if (asgn && (isLeaveStatus(asgn.status) || asgn.isLeave)) leaveCount++;
       });
 
       const baseWeekly = state.weeklyTargets[weekIdx] || 0;
@@ -667,7 +692,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     let empLeaveCount = 0;
     calendarDays.forEach(d => {
       const a = st.assignedShifts[d.dateString];
-      if (a && a.status === "L") empLeaveCount++;
+      if (a && (isLeaveStatus(a.status) || a.isLeave)) empLeaveCount++;
     });
     const netTargetShifts = Math.max(0, st.totalMonthlyTargetShifts - empLeaveCount);
 
@@ -696,7 +721,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       // Do NOT overwrite days that are on leave, leave-protected, or night training rest!
       const existing = st.assignedShifts[dStr];
       if (existing) {
-        if (existing.status === "L" || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
+        if (isLeaveStatus(existing.status) || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
           return;
         }
       }
@@ -747,7 +772,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     let empLeaveCount = 0;
     calendarDays.forEach(d => {
       const a = st.assignedShifts[d.dateString];
-      if (a && a.status === "L") empLeaveCount++;
+      if (a && (isLeaveStatus(a.status) || a.isLeave)) empLeaveCount++;
     });
     const netTargetShifts = Math.max(0, st.totalMonthlyTargetShifts - empLeaveCount);
 
@@ -764,7 +789,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       const dStr = dayInfo.dateString;
       const existing = st.assignedShifts[dStr];
       if (existing) {
-        if (existing.status === "L" || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
+        if (isLeaveStatus(existing.status) || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
           return;
         }
       }
@@ -921,8 +946,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           let reason = "";
           let conflictMeta = null;
 
-          if (asgn && (asgn.status === "L" || asgn.leaveProtected)) {
-            reason = "Approved Annual Leave";
+          if (asgn && (isLeaveStatus(asgn.status) || asgn.leaveProtected)) {
+            reason = asgn.leaveType ? `Approved ${asgn.leaveType}` : "Approved Leave";
             conflictMeta = {
               conflictingRules: "Approved Leave vs. Daily Staff Quota",
               winningRule: "Approved Leave",
@@ -1061,8 +1086,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
           let reason = "";
           let conflictMeta = null;
 
-          if (asgn && (asgn.status === "L" || asgn.leaveProtected)) {
-            reason = "Approved Annual Leave";
+          if (asgn && (isLeaveStatus(asgn.status) || asgn.leaveProtected)) {
+            reason = asgn.leaveType ? `Approved ${asgn.leaveType}` : "Approved Leave";
             conflictMeta = {
               conflictingRules: "Approved Leave vs. Daily Night Quota",
               winningRule: "Approved Leave",
@@ -1239,7 +1264,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     calendarDays.forEach(day => {
       const asgn = st.assignedShifts[day.dateString] || { shift: "OFF", status: "OFF", coveringRole: st.designation };
       if (asgn.status === "D" || asgn.status === "N") floorShifts++;
-      else if (asgn.status === "L") leaveShifts++;
+      else if (isLeaveStatus(asgn.status) || asgn.isLeave) leaveShifts++;
       else if (asgn.status === "TR") trainingShifts++;
 
       flatRota.push({
