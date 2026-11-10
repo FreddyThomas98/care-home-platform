@@ -1814,36 +1814,46 @@ tbody tr:hover {
     font-size: 7.5pt !important;
   }
 
-  .print-table th.col-staff {
-    width: 18% !important;
+  .print-table th.col-staff,
+  .print-table th.th-left:first-child,
+  .print-table thead th:first-child,
+  .print-table thead th:nth-child(1) {
+    width: 26% !important;
     text-align: left !important;
-    padding-left: 5px !important;
+    padding-left: 6px !important;
   }
 
-  .print-table th.col-role {
-    width: 13% !important;
+  .print-table th.col-role,
+  .print-table th.th-left:nth-child(2),
+  .print-table thead th:nth-child(2) {
+    width: 16% !important;
     text-align: left !important;
-    padding-left: 5px !important;
+    padding-left: 6px !important;
   }
 
   .print-table th.col-tgt {
-    width: 7% !important;
+    width: 14% !important;
+    text-align: center !important;
   }
 
   .print-table th.col-day {
-    width: 8.85% !important;
+    width: 6.3% !important;
+    text-align: center !important;
   }
 
-  .print-table td.col-staff {
+  .print-table td.col-staff,
+  .print-table tbody tr:not(.floor-group-header) td:first-child,
+  .print-table tbody tr:not(.floor-group-header) td:nth-child(1) {
     text-align: left !important;
-    padding-left: 5px !important;
+    padding-left: 6px !important;
     font-weight: 700 !important;
     color: #0f172a !important;
   }
 
-  .print-table td.col-role {
+  .print-table td.col-role,
+  .print-table tbody tr:not(.floor-group-header) td:nth-child(2) {
     text-align: left !important;
-    padding-left: 5px !important;
+    padding-left: 6px !important;
     font-size: 7.5pt !important;
     color: #334155 !important;
   }

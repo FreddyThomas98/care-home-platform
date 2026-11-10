@@ -3085,9 +3085,10 @@ async function exportRotaToExcel() {
       const applyHeaderStyle = (row, bgColor = "FF0B3542", fontColor = "FFFFFFFF") => {
         row.height = 26;
         row.eachCell((cell, colNumber) => {
+          const colIdx = Number(colNumber) || (cell && cell.col ? Number(cell.col) : 1);
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
           cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: fontColor } };
-          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 2 ? 'left' : 'center', wrapText: true };
+          cell.alignment = { vertical: 'middle', horizontal: colIdx <= 2 ? 'left' : 'center', wrapText: true };
           cell.border = {
             top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
             left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
@@ -3095,15 +3096,18 @@ async function exportRotaToExcel() {
             right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
           };
         });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
       };
 
       const applyDataRowStyle = (row, isEven = false) => {
         row.height = 20;
         const rowBg = isEven ? "FFF8FAFC" : "FFFFFFFF";
         row.eachCell((cell, colNumber) => {
+          const colIdx = Number(colNumber) || (cell && cell.col ? Number(cell.col) : 1);
           cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: 'FF0F172A' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
-          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 2 ? 'left' : 'center' };
+          cell.alignment = { vertical: 'middle', horizontal: colIdx <= 2 ? 'left' : 'center' };
           cell.border = {
             top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
             left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -3137,6 +3141,8 @@ async function exportRotaToExcel() {
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF1E40AF' } };
           }
         });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+        row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left' };
       };
 
       if (rotaSubView === "weekly") {
@@ -3174,17 +3180,17 @@ async function exportRotaToExcel() {
           applyHeaderStyle(headerRowDay, "FF0B3542", "FFFFFFFF");
 
           wsDay.columns = [
-            { width: 26 },
-            { width: 18 },
-            { width: 16 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 18 }
+            { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
+            { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
+            { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } }
           ];
 
           const dayStaffList = staffList.filter(st => {
@@ -3285,17 +3291,17 @@ async function exportRotaToExcel() {
           applyHeaderStyle(headerRowNight, "FF1E1B4B", "FFFFFFFF");
 
           wsNight.columns = [
-            { width: 26 },
-            { width: 18 },
-            { width: 16 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 14 },
-            { width: 18 }
+            { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
+            { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
+            { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } }
           ];
 
           const nightStaffList = staffList.filter(st => {
@@ -3384,15 +3390,15 @@ async function exportRotaToExcel() {
         applyHeaderStyle(headerRow, "FF0B3542", "FFFFFFFF");
 
         ws.columns = [
-          { width: 26 },
-          { width: 18 },
-          { width: 16 },
-          ...calendarDays.map(() => ({ width: 10 })),
-          { width: 12 },
-          { width: 12 },
-          { width: 14 },
-          { width: 14 },
-          { width: 24 }
+          { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
+          { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
+          { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+          ...calendarDays.map(() => ({ width: 10, alignment: { vertical: 'middle', horizontal: 'center' } })),
+          { width: 12, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 12, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 24, alignment: { vertical: 'middle', horizontal: 'center' } }
         ];
 
         const staffList = sortStaffByPriority(balances, currentRotaData.rolePriorityMap);
@@ -3470,18 +3476,18 @@ async function exportRotaToExcel() {
         applyHeaderStyle(headerRow, "FF0B3542", "FFFFFFFF");
 
         ws.columns = [
-          { width: 26 },
-          { width: 18 },
-          { width: 16 },
-          { width: 14 },
-          { width: 16 },
-          { width: 16 },
-          { width: 18 },
-          { width: 14 },
-          { width: 16 },
-          { width: 22 },
-          { width: 18 },
-          { width: 26 }
+          { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
+          { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
+          { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 22, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } },
+          { width: 26, alignment: { vertical: 'middle', horizontal: 'center' } }
         ];
 
         let totalTarget = 0;
@@ -3718,8 +3724,8 @@ function preparePrintContainer() {
         <table class="print-table">
           <thead>
             <tr>
-              <th class="th-left" style="width:26%; text-align:left;">Staff Name</th>
-              <th class="th-left" style="width:16%; text-align:left;">Role</th>
+              <th class="col-staff th-left" style="width:26%; text-align:left;">Staff Name</th>
+              <th class="col-role th-left" style="width:16%; text-align:left;">Role</th>
               <th style="width:14%; text-align:center;">Contract Hours</th>
               ${w.days.map(d => `
                 <th style="width:6.3%; text-align:center;">
@@ -3743,10 +3749,10 @@ function preparePrintContainer() {
                 ${grp.staff.map(st => {
         return `
                     <tr>
-                      <td style="text-align:left;">
+                      <td class="col-staff" style="text-align:left;">
                         <strong>${esc(st.employeeName)}</strong>
                       </td>
-                      <td style="text-align:left;">${esc(st.designation)}</td>
+                      <td class="col-role" style="text-align:left;">${esc(st.designation)}</td>
                       <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
                       ${w.days.map(d => {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
@@ -3792,8 +3798,8 @@ function preparePrintContainer() {
         <table class="print-table">
           <thead>
             <tr>
-              <th class="th-left" style="width:26%; text-align:left;">Staff Name</th>
-              <th class="th-left" style="width:16%; text-align:left;">Role</th>
+              <th class="col-staff th-left" style="width:26%; text-align:left;">Staff Name</th>
+              <th class="col-role th-left" style="width:16%; text-align:left;">Role</th>
               <th style="width:14%; text-align:center;">Contract Hours</th>
               ${w.days.map(d => `
                 <th style="width:6.3%; text-align:center;">
@@ -3807,8 +3813,8 @@ function preparePrintContainer() {
             ${sortStaffByPriority(nightStaff, currentRotaData.rolePriorityMap).map(st => {
       return `
                 <tr>
-                  <td style="text-align:left;"><strong>${esc(st.employeeName)}</strong></td>
-                  <td style="text-align:left;">${esc(st.designation)}</td>
+                  <td class="col-staff" style="text-align:left;"><strong>${esc(st.employeeName)}</strong></td>
+                  <td class="col-role" style="text-align:left;">${esc(st.designation)}</td>
                   <td style="text-align:center; font-weight:600;">${st.contractHours}h</td>
                   ${w.days.map(d => {
         const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
