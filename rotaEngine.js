@@ -897,8 +897,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     }
 
     // PASS 3: Adjacent Weekdays for Weekend Workers (Friday)
+    // Only pre-assign actual weekend workers on Friday so non-weekend staff aren't exhausted before Wed/Thu
     const friDay = weekDays.find(d => d.dayName === "Friday");
-    if (friDay) {
+    if (friDay && weekendDays.length > 0) {
       sortedRoles.forEach(reqRole => {
         ["D", "N"].forEach(shiftType => {
           const reqQuota = getRequiredQuota(reqRole, shiftType, friDay);
@@ -912,30 +913,76 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             shiftType,
             reqRole,
             reqQuota,
-            (st) => canTakeShift(st, friDay, shiftType, reqRole),
+            (st) => {
+              if (!canTakeShift(st, friDay, shiftType, reqRole)) return false;
+              return weekendDays.some(wd => st.assignedShifts[wd.dateString] && st.assignedShifts[wd.dateString].shift !== "OFF");
+            },
             (a, b) => {
               const needA = a.workShiftsAllowedThisWeek - a.shiftsThisWeek;
               const needB = b.workShiftsAllowedThisWeek - b.shiftsThisWeek;
-              if (needB !== needA) return needB - needA;
-              const aHasWk = weekendDays.some(wd => a.assignedShifts[wd.dateString] && a.assignedShifts[wd.dateString].shift !== "OFF");
-              const bHasWk = weekendDays.some(wd => b.assignedShifts[wd.dateString] && b.assignedShifts[wd.dateString].shift !== "OFF");
-              if (bHasWk && !aHasWk) return 1;
-              if (aHasWk && !bHasWk) return -1;
-              return 0;
+              return needB - needA;
             }
           );
         });
       });
     }
 
-    // PASS 4: Weekdays for Staff Needing Shifts (Plus immediate cross-role family sync)
+    // PASS 4: Weekdays for Staff Needing Shifts
+    // Sub-Pass 4A ensures every weekday (including Wed/Thu/Fri) gets a minimum safe base (never 0) first,
+    // and Sub-Pass 4B then fills days all the way to full 100% quota so we keep maximum full green days.
     const weekdaysOnly = weekDays.filter(d => !d.isWeekend);
-    weekdaysOnly.forEach(wDay => {
-      const dStr = wDay.dateString;
-      sortedRoles.forEach(reqRole => {
-        ["D", "N"].forEach(shiftType => {
+    sortedRoles.forEach(reqRole => {
+      ["D", "N"].forEach(shiftType => {
+        // Sub-Pass 4A: Minimum Safe Base across all weekdays (prevents 0-allotted days on Wed/Thu)
+        weekdaysOnly.forEach(wDay => {
           const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
           if (reqQuota <= 0) return;
+          const dStr = wDay.dateString;
+          const safeBaseQuota = reqQuota >= 4 ? Math.ceil(reqQuota * 0.6) : (reqQuota >= 2 ? Math.ceil(reqQuota * 0.5) : 1);
+
+          // For floor-managed Day roles, ensure each populated floor gets its minimum base on wDay first
+          if (shiftType === "D" && isFloorManagedRole(reqRole)) {
+            VALID_FLOORS.forEach(floorName => {
+              const fQuota = getFloorPoolQuota(floorName, reqRole, wDay);
+              if (fQuota <= 0) return;
+              const fSafeBase = fQuota >= 4 ? Math.ceil(fQuota * 0.6) : (fQuota >= 2 ? Math.ceil(fQuota * 0.5) : 1);
+              const poolKey = getFloorPoolKey(floorName, reqRole);
+
+              while (
+                (dailyFilled[dStr][shiftType][reqRole] || 0) < reqQuota &&
+                ((dailyFloorFilled[dStr] && dailyFloorFilled[dStr][floorName] && dailyFloorFilled[dStr][floorName][poolKey]) || 0) < fSafeBase
+              ) {
+                const eligible = Object.values(empState).filter(st =>
+                  (st.floor || "") === floorName && canTakeShift(st, wDay, shiftType, reqRole)
+                );
+                if (eligible.length === 0) break;
+                eligible.sort((a, b) => {
+                  const famCmp = compareFamilyPriority(a, b, dStr, wDay.dayName);
+                  if (famCmp !== 0) return famCmp;
+                  return (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek);
+                });
+                assignShift(eligible[0], wDay, shiftType, reqRole);
+              }
+            });
+          }
+
+          if ((dailyFilled[dStr][shiftType][reqRole] || 0) < safeBaseQuota) {
+            pickCandidatesIteratively(
+              wDay,
+              shiftType,
+              reqRole,
+              safeBaseQuota,
+              (st) => canTakeShift(st, wDay, shiftType, reqRole),
+              (a, b) => (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek)
+            );
+          }
+        });
+
+        // Sub-Pass 4B: Full Quota Completion (fills days to 100% reqQuota without equalizing shortages)
+        weekdaysOnly.forEach(wDay => {
+          const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
+          if (reqQuota <= 0) return;
+          const dStr = wDay.dateString;
           if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
 
           pickCandidatesIteratively(
@@ -1239,6 +1286,218 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       st.totalShiftsWorked++;
       st.totalHoursWorked += st.shiftHours;
     }
+  });
+
+  // PASS 7C: Targeted "No-Zero-Day" Rescue Pass (Zero Rule Overlap)
+  // If any required role or floor role pool has 0 staff allotted on a day in a week while other days in the same week
+  // have surplus/full staffing, move 1–2 legal shifts from the fullest day(s) in that week into the 0 day
+  // while strictly enforcing 100% of existing rules (consecutive days, turnaround rest, leave, preferences, patterns, weekend rule, family links).
+  function canLegallyMoveShiftWithinWeek(st, donorDayInfo, targetDayInfo, shiftType) {
+    const donorStr = donorDayInfo.dateString;
+    const targetStr = targetDayInfo.dateString;
+    if (donorStr === targetStr) return false;
+    if (st.staffType !== shiftType) return false;
+
+    const donorAsgn = st.assignedShifts[donorStr];
+    if (!donorAsgn || donorAsgn.shift !== shiftType || donorAsgn.status !== shiftType) return false;
+
+    const targetAsgn = st.assignedShifts[targetStr];
+    if (targetAsgn && (isLeaveStatus(targetAsgn.status) || targetAsgn.isLeave || targetAsgn.leaveProtected || targetAsgn.isNightTrainingRest || targetAsgn.shift !== "OFF")) {
+      return false;
+    }
+
+    // Hard unavailability or positive preference check
+    if (isUnavailable(st.id, targetStr, targetDayInfo.dayName)) return false;
+    if (hasPositivePref(st.id, donorStr, donorDayInfo.dayName)) return false;
+
+    // Repeating pattern check: never break a repeating pattern work/off day
+    if (st.pattern) {
+      if (isPatternWorkDay(st, donorStr) === true) return false;
+      if (isPatternWorkDay(st, targetStr) === false) return false;
+    }
+
+    // Weekend rule check: do not pull weekend workers off their weekend onto a weekday, or force non-weekend cohort onto a weekend
+    if (donorDayInfo.isWeekend && !targetDayInfo.isWeekend) return false;
+    if (!donorDayInfo.isWeekend && targetDayInfo.isWeekend && !st.isWeekendWorkingWeek) return false;
+
+    // Family Members Together check: do not split a family pair if their partner is working on donorDay
+    if (st.familyPeers && st.familyPeers.length > 0) {
+      if (hasFamilyWorkingOnDate(st, donorStr) && !hasFamilyWorkingOnDate(st, targetStr)) {
+        return false;
+      }
+      if (hasFamilyOffOrUnavailableOnDate(st, targetStr, targetDayInfo.dayName)) {
+        return false;
+      }
+    }
+
+    // Temporarily simulate the swap to verify consecutive streak & turnaround rest across the entire calendar + 7-day lookback
+    const savedDonor = st.assignedShifts[donorStr];
+    const savedTarget = st.assignedShifts[targetStr] || { shift: "OFF", status: "OFF", coveringRole: "" };
+
+    st.assignedShifts[donorStr] = { shift: "OFF", status: "OFF", coveringRole: "" };
+    st.assignedShifts[targetStr] = {
+      shift: shiftType,
+      status: shiftType,
+      coveringRole: savedDonor.coveringRole || st.designation,
+      isContractFulfillment: Boolean(savedDonor.isContractFulfillment)
+    };
+
+    let isLegal = true;
+    const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+    const maxConsecutive = isMaintenance ? 5 : 4;
+    const targetIdx = calendarDays.findIndex(d => d.dateString === targetStr);
+
+    // 1. Consecutive streak check around targetIdx (including 7-day lookback)
+    let consecutive = 1;
+    for (let i = targetIdx - 1; i >= -7; i--) {
+      const prev = getShiftAtCalendarIdx(st, i);
+      if (prev && (prev.shift === "D" || prev.shift === "N")) consecutive++;
+      else break;
+    }
+    for (let i = targetIdx + 1; i < calendarDays.length; i++) {
+      const next = getShiftAtCalendarIdx(st, i);
+      if (next && (next.shift === "D" || next.shift === "N")) consecutive++;
+      else break;
+    }
+    if (consecutive > maxConsecutive) isLegal = false;
+
+    // 2. Turnaround rest & pre-training night rest check
+    if (isLegal && shiftType === "D") {
+      const prev = getShiftAtCalendarIdx(st, targetIdx - 1);
+      if (prev && prev.shift === "N") isLegal = false;
+    }
+    if (isLegal && shiftType === "N" && targetIdx < calendarDays.length - 1) {
+      const nextAsgn = st.assignedShifts[calendarDays[targetIdx + 1].dateString];
+      if (nextAsgn && (nextAsgn.shift === "D" || nextAsgn.status === "TR")) isLegal = false;
+    }
+
+    // Restore original state after simulation
+    st.assignedShifts[donorStr] = savedDonor;
+    st.assignedShifts[targetStr] = savedTarget;
+
+    return isLegal;
+  }
+
+  function executeShiftMoveWithinWeek(st, donorDayInfo, targetDayInfo, shiftType) {
+    const donorStr = donorDayInfo.dateString;
+    const targetStr = targetDayInfo.dateString;
+    const savedDonor = st.assignedShifts[donorStr];
+    st.assignedShifts[donorStr] = { shift: "OFF", status: "OFF", coveringRole: "" };
+    st.assignedShifts[targetStr] = {
+      shift: shiftType,
+      status: shiftType,
+      coveringRole: (savedDonor && savedDonor.coveringRole) || st.designation,
+      isContractFulfillment: Boolean(savedDonor && savedDonor.isContractFulfillment)
+    };
+  }
+
+  weeks.forEach(weekDays => {
+    // Part A: Rescue any 0-allotted day on Floor-Wise Day Role Pools (Top Floor, Ground Floor, Lower Ground Floor)
+    VALID_FLOORS.forEach(floorName => {
+      const checkedPoolKeys = new Set();
+      Object.keys(requirements).forEach(roleName => {
+        const poolKey = getFloorPoolKey(floorName, roleName);
+        if (checkedPoolKeys.has(poolKey)) return;
+        checkedPoolKeys.add(poolKey);
+
+        const poolRoles = getFloorPoolRoles(floorName, roleName);
+        const countFloorPoolOnDay = (dStr) => Object.values(empState).filter(s => {
+          const asgn = s.assignedShifts[dStr];
+          return asgn && asgn.shift === "D" && asgn.status !== "TR" && (s.floor || "") === floorName &&
+            (poolRoles.includes(asgn.coveringRole) || poolRoles.includes(s.designation));
+        }).length;
+
+        weekDays.forEach(zeroDay => {
+          const fQuota = getFloorPoolQuota(floorName, roleName, zeroDay);
+          if (fQuota <= 0) return;
+          const initialCount = countFloorPoolOnDay(zeroDay.dateString);
+          const minAcceptable = fQuota >= 4 ? 2 : 1;
+          if (initialCount >= minAcceptable) return; // Trigger rescue when 0 (or 1 when quota >= 4)
+
+          const targetRescue = minAcceptable;
+          for (let step = 0; step < targetRescue; step++) {
+            const curZeroCount = countFloorPoolOnDay(zeroDay.dateString);
+            if (curZeroCount >= targetRescue) break;
+
+            // Find donor days in the same week that have at least 2 staff and at least (curZeroCount + 2) staff
+            const donorDays = weekDays
+              .filter(d => d.dateString !== zeroDay.dateString && countFloorPoolOnDay(d.dateString) >= Math.max(2, curZeroCount + 2))
+              .sort((a, b) => countFloorPoolOnDay(b.dateString) - countFloorPoolOnDay(a.dateString));
+
+            let moved = false;
+            for (const donorDay of donorDays) {
+              const donorCandidates = Object.values(empState).filter(s =>
+                s.staffType === "D" &&
+                (s.floor || "") === floorName &&
+                poolRoles.includes(s.designation) &&
+                canLegallyMoveShiftWithinWeek(s, donorDay, zeroDay, "D")
+              );
+              if (donorCandidates.length > 0) {
+                executeShiftMoveWithinWeek(donorCandidates[0], donorDay, zeroDay, "D");
+                moved = true;
+                break;
+              }
+            }
+            if (!moved) break;
+          }
+        });
+      });
+    });
+
+    // Part B: Rescue any 0-allotted day on Whole-Home Roles (Day & Night)
+    Object.keys(requirements).forEach(roleName => {
+      ["D", "N"].forEach(shiftType => {
+        const countRoleOnDay = (dStr) => Object.values(empState).filter(s => {
+          const asgn = s.assignedShifts[dStr];
+          return asgn && asgn.shift === shiftType && asgn.status !== "TR" &&
+            (asgn.coveringRole === roleName || s.designation === roleName);
+        }).length;
+
+        weekDays.forEach(zeroDay => {
+          const reqQuota = getRequiredQuota(roleName, shiftType, zeroDay);
+          if (reqQuota <= 0) return;
+          const initialCount = countRoleOnDay(zeroDay.dateString);
+          const minAcceptable = reqQuota >= 4 ? 2 : 1;
+          if (initialCount >= minAcceptable) return;
+
+          const targetRescue = minAcceptable;
+          for (let step = 0; step < targetRescue; step++) {
+            const curZeroCount = countRoleOnDay(zeroDay.dateString);
+            if (curZeroCount >= targetRescue) break;
+
+            const donorDays = weekDays
+              .filter(d => d.dateString !== zeroDay.dateString && countRoleOnDay(d.dateString) >= Math.max(2, curZeroCount + 2))
+              .sort((a, b) => countRoleOnDay(b.dateString) - countRoleOnDay(a.dateString));
+
+            let moved = false;
+            for (const donorDay of donorDays) {
+              const donorCandidates = Object.values(empState).filter(s => {
+                if (s.staffType !== shiftType || s.designation !== roleName) return false;
+                if (!canLegallyMoveShiftWithinWeek(s, donorDay, zeroDay, shiftType)) return false;
+                // Ensure donating doesn't leave the employee's floor with 0 on donorDay
+                if (shiftType === "D" && s.floor && VALID_FLOORS.includes(s.floor) && isFloorManagedRole(roleName)) {
+                  const poolRoles = getFloorPoolRoles(s.floor, roleName);
+                  const floorDonorCount = Object.values(empState).filter(other => {
+                    const a = other.assignedShifts[donorDay.dateString];
+                    return a && a.shift === "D" && a.status !== "TR" && (other.floor || "") === s.floor &&
+                      (poolRoles.includes(a.coveringRole) || poolRoles.includes(other.designation));
+                  }).length;
+                  if (floorDonorCount <= 1) return false;
+                }
+                return true;
+              });
+
+              if (donorCandidates.length > 0) {
+                executeShiftMoveWithinWeek(donorCandidates[0], donorDay, zeroDay, shiftType);
+                moved = true;
+                break;
+              }
+            }
+            if (!moved) break;
+          }
+        });
+      });
+    });
   });
 
   // 6. Post-Scheduling Audit: Consecutive Work Streaks across Week Boundaries
