@@ -286,18 +286,33 @@ function showConfirmModal({ title = "Confirm Deletion", message = "Are you sure 
   }
 }
 
-/* Helper to safely retrieve or construct weekly chunks from rota calendar days */
+/* Helper to safely retrieve or construct weekly chunks from rota calendar days (supports custom date ranges & partial weeks) */
 function getRotaWeeks(data) {
   if (data && Array.isArray(data.weeks) && data.weeks.length > 0) {
     return data.weeks;
   }
   const calendarDays = (data && data.calendarDays) || [];
   const weeks = [];
-  for (let i = 0; i < calendarDays.length; i += 7) {
-    weeks.push({
-      num: (i / 7) + 1,
-      days: calendarDays.slice(i, i + 7)
+  const isStandard7DayAligned = (calendarDays.length % 7 === 0) && (calendarDays.length > 0 && calendarDays[0].dayName === "Monday");
+  if (isStandard7DayAligned) {
+    for (let i = 0; i < calendarDays.length; i += 7) {
+      weeks.push({
+        num: (i / 7) + 1,
+        days: calendarDays.slice(i, i + 7)
+      });
+    }
+  } else {
+    let currentDays = [];
+    calendarDays.forEach((d, idx) => {
+      if (idx > 0 && d.dayName === "Monday") {
+        weeks.push({ num: weeks.length + 1, days: currentDays });
+        currentDays = [];
+      }
+      currentDays.push(d);
     });
+    if (currentDays.length > 0) {
+      weeks.push({ num: weeks.length + 1, days: currentDays });
+    }
   }
   return weeks;
 }
@@ -483,18 +498,27 @@ function getFloorShiftStats(d, shiftType, rota, requirements, floorName, balance
       addRoleStat("SN / TL", leadReq, allottedLeads);
     }
 
-    // 2. Carers on Top Floor
+    // 2. Senior Carers on Top Floor
+    const scReqObj = reqList.find(r => r.role_name === "Senior Carer");
+    const scReq = (scReqObj && scReqObj.top_floor_required) ? scReqObj.top_floor_required : 0;
+    if (scReq > 0) {
+      const allottedSC = allottedOnFloor.filter(r =>
+        r.coveringRole === "Senior Carer" || r.designation === "Senior Carer"
+      ).length;
+      addRoleStat("Senior Carer", scReq, allottedSC);
+    }
+
+    // 3. Carers on Top Floor
     const carerReqObj = reqList.find(r => r.role_name === "Carer");
     const carerReq = (carerReqObj && carerReqObj.top_floor_required) ? carerReqObj.top_floor_required : 0;
     if (carerReq > 0) {
       const allottedCarers = allottedOnFloor.filter(r =>
-        r.coveringRole === "Carer" || r.designation === "Carer" ||
-        r.coveringRole === "Senior Carer" || r.designation === "Senior Carer"
+        r.coveringRole === "Carer" || r.designation === "Carer"
       ).length;
       addRoleStat("Carer", carerReq, allottedCarers);
     }
 
-    // 3. Other explicit roles on Top Floor
+    // 4. Other explicit roles on Top Floor
     reqList.forEach(r => {
       if (r.role_name !== "Staff Nurse" && r.role_name !== "Advanced Team Leader" && r.role_name !== "Team Leader" && r.role_name !== "Carer" && r.role_name !== "Senior Carer") {
         const q = r.top_floor_required || 0;
@@ -613,6 +637,13 @@ async function renderRotaView() {
     });
     const ruleConflictsCount = (conflictsList || []).length;
 
+    const activeStart = currentRotaData.startDate || (calendarDays[0] && calendarDays[0].dateString) || "2026-09-28";
+    const activeEnd = currentRotaData.endDate || (calendarDays[calendarDays.length - 1] && calendarDays[calendarDays.length - 1].dateString) || "2026-10-25";
+    const isP10 = activeStart === "2026-09-28" && activeEnd === "2026-10-25";
+    const isP11 = activeStart === "2026-10-26" && activeEnd === "2026-11-22";
+    const isP12 = activeStart === "2026-11-23" && activeEnd === "2026-12-20";
+    const isCustomRange = !isP10 && !isP11 && !isP12;
+
     let html = `
       <div class="card">
         <div class="card-header">
@@ -629,13 +660,21 @@ async function renderRotaView() {
           </div>
 
           <div class="card-actions-row">
-            <select id="rotaPeriodSelect" class="select-filter-pill" style="font-weight:700;">
-              <option value="P10_2026" data-start="2026-09-28" data-end="2026-10-25" selected>📅 Period 10 (2026): 28 Sep – 25 Oct</option>
-              <option value="P11_2026" data-start="2026-10-26" data-end="2026-11-22">📅 Period 11 (2026): 26 Oct – 22 Nov</option>
-              <option value="P12_2026" data-start="2026-11-23" data-end="2026-12-20">📅 Period 12 (2026): 23 Nov – 20 Dec</option>
+            <select id="rotaPeriodSelect" class="select-filter-pill" style="font-weight:700;" onchange="onPeriodPresetChange()">
+              <option value="P10_2026" data-start="2026-09-28" data-end="2026-10-25" ${isP10 ? 'selected' : ''}>📅 Period 10 (2026): 28 Sep – 25 Oct</option>
+              <option value="P11_2026" data-start="2026-10-26" data-end="2026-11-22" ${isP11 ? 'selected' : ''}>📅 Period 11 (2026): 26 Oct – 22 Nov</option>
+              <option value="P12_2026" data-start="2026-11-23" data-end="2026-12-20" ${isP12 ? 'selected' : ''}>📅 Period 12 (2026): 23 Nov – 20 Dec</option>
+              <option value="CUSTOM" ${isCustomRange ? 'selected' : ''}>📅 Custom Date Range</option>
             </select>
 
-            <button class="btn btn-primary" onclick="triggerGenerateRota()">
+            <div style="display:inline-flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:3px 8px;">
+              <span style="font-size:11px; font-weight:700; color:#475569;">From</span>
+              <input type="date" id="rotaCustomStartDate" value="${activeStart}" onchange="onCustomDateInputChange()" style="border:1px solid #cbd5e1; border-radius:5px; padding:3px 6px; font-size:12px; font-weight:700; color:#0f172a; background:#ffffff;">
+              <span style="font-size:11px; font-weight:700; color:#475569;">To</span>
+              <input type="date" id="rotaCustomEndDate" value="${activeEnd}" onchange="onCustomDateInputChange()" style="border:1px solid #cbd5e1; border-radius:5px; padding:3px 6px; font-size:12px; font-weight:700; color:#0f172a; background:#ffffff;">
+            </div>
+
+            <button class="btn btn-primary" onclick="triggerGenerateRota(event)">
               ⚡ Generate Rota
             </button>
             <button class="btn btn-secondary" onclick="exportRotaToExcel()">
@@ -689,7 +728,7 @@ async function renderRotaView() {
               📅 Weekly Shift Schedule
             </button>
             <button class="btn-subnav ${rotaSubView === 'monthly' ? 'active' : ''}" onclick="setRotaSubView('monthly')">
-              👥 Staff-wise Monthly Matrix (28 Days)
+              👥 Staff-wise Matrix (${calendarDays.length} Days)
             </button>
             <button class="btn-subnav ${rotaSubView === 'balances' ? 'active' : ''}" onclick="setRotaSubView('balances')">
               📊 Contract Hours & Balances
@@ -719,11 +758,11 @@ async function renderRotaView() {
           <div class="weeks-selector-group">
             <button class="btn-week-pill" onclick="navigateWeek('prev')" title="Previous Week">‹</button>
             <button class="btn-week-pill ${selectedWeek === 'all' ? 'active' : ''}" onclick="setRotaWeek('all')">
-              All Weeks (4)
+              All Weeks (${weeks.length})
             </button>
             ${weeks.map(w => `
               <button class="btn-week-pill ${String(selectedWeek) === String(w.num) ? 'active' : ''}" onclick="setRotaWeek('${w.num}')">
-                Week ${w.num} (${formatShortDate(w.days[0].dateString)} - ${formatShortDate(w.days[6].dateString)})
+                Week ${w.num} (${formatShortDate(w.days[0].dateString)} - ${formatShortDate(w.days[w.days.length - 1].dateString)})
               </button>
             `).join('')}
             <button class="btn-week-pill" onclick="navigateWeek('next')" title="Next Week">›</button>
@@ -782,7 +821,7 @@ async function renderRotaView() {
                   <span>📅</span> Week ${week.num} Schedule ⌵
                 </div>
                 <div style="font-size:12px; color:#64748b; font-weight:600;">
-                  ${days[0].dateString} – ${days[6].dateString}
+                  ${days[0].dateString} – ${days[days.length - 1].dateString}
                 </div>
               </div>
 
@@ -1264,24 +1303,31 @@ function renderMonthlyMatrixHtml(data) {
               <th rowspan="2" style="min-width:75px; text-align:center; padding:8px 4px; border-right:1px solid #cbd5e1; background:#f8fafc;" title="Net Contract Target Hours">Tgt Hrs</th>
               <th rowspan="2" style="min-width:75px; text-align:center; padding:8px 4px; border-right:2px solid #0b3542; background:#f8fafc;" title="Floor Hours Worked">Wrk Hrs</th>
 
-              <th colspan="7" class="week-sep-left" style="text-align:center; background:#e0f2fe; color:#0369a1; font-weight:800; font-size:12px; border-right:1px solid #bae6fd; padding:6px;">
-                WEEK 1 (${formatShortDate(calendarDays[0].dateString)} – ${formatShortDate(calendarDays[6].dateString)})
-              </th>
-              <th colspan="7" class="week-sep-left" style="text-align:center; background:#f0fdf4; color:#15803d; font-weight:800; font-size:12px; border-right:1px solid #bbf7d0; padding:6px;">
-                WEEK 2 (${formatShortDate(calendarDays[7].dateString)} – ${formatShortDate(calendarDays[13].dateString)})
-              </th>
-              <th colspan="7" class="week-sep-left" style="text-align:center; background:#fefce8; color:#a16207; font-weight:800; font-size:12px; border-right:1px solid #fef08a; padding:6px;">
-                WEEK 3 (${formatShortDate(calendarDays[14].dateString)} – ${formatShortDate(calendarDays[20].dateString)})
-              </th>
-              <th colspan="7" class="week-sep-left" style="text-align:center; background:#faf5ff; color:#7e22ce; font-weight:800; font-size:12px; padding:6px;">
-                WEEK 4 (${formatShortDate(calendarDays[21].dateString)} – ${formatShortDate(calendarDays[27].dateString)})
-              </th>
+              ${(() => {
+                const matrixWeeks = getRotaWeeks(currentRotaData);
+                const weekStyles = [
+                  { bg: "#e0f2fe", color: "#0369a1", border: "#bae6fd" },
+                  { bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" },
+                  { bg: "#fefce8", color: "#a16207", border: "#fef08a" },
+                  { bg: "#faf5ff", color: "#7e22ce", border: "#e9d5ff" }
+                ];
+                return matrixWeeks.map((mw, wIdx) => {
+                  const st = weekStyles[wIdx % weekStyles.length];
+                  const firstDay = mw.days[0];
+                  const lastDay = mw.days[mw.days.length - 1];
+                  return `
+                    <th colspan="${mw.days.length}" class="week-sep-left" style="text-align:center; background:${st.bg}; color:${st.color}; font-weight:800; font-size:12px; border-right:1px solid ${st.border}; padding:6px;">
+                      WEEK ${mw.num} (${formatShortDate(firstDay.dateString)} – ${formatShortDate(lastDay.dateString)})
+                    </th>
+                  `;
+                }).join('');
+              })()}
             </tr>
 
             <!-- Day Header Row -->
             <tr style="background:#ffffff;">
               ${calendarDays.map((d, idx) => {
-    const isWkStart = idx % 7 === 0;
+    const isWkStart = idx === 0 || d.dayName === "Monday";
     return `
                   <th class="${isWkStart ? 'week-sep-left' : ''} ${d.isWeekend ? 'weekend-hdr' : ''}" style="text-align:center; min-width:36px; padding:4px 2px; font-size:11px; ${d.isWeekend ? 'background:#f1f5f9;' : 'background:#ffffff;'}">
                     <span style="font-weight:800; color:#0f172a;">${d.dayName.substring(0, 2)}</span><br>
@@ -1575,16 +1621,59 @@ function renderContractBalancesHtml(data) {
   `;
 }
 
-async function triggerGenerateRota() {
+function onPeriodPresetChange() {
   const select = document.getElementById("rotaPeriodSelect");
+  if (!select) return;
   const opt = select.options[select.selectedIndex];
-  const sDate = opt.dataset.start;
-  const eDate = opt.dataset.end;
-  const pLabel = opt.text;
+  const sInput = document.getElementById("rotaCustomStartDate");
+  const eInput = document.getElementById("rotaCustomEndDate");
+  if (opt && opt.value !== "CUSTOM" && opt.dataset.start && opt.dataset.end) {
+    if (sInput) sInput.value = opt.dataset.start;
+    if (eInput) eInput.value = opt.dataset.end;
+  }
+}
 
-  const btn = event.target;
-  btn.disabled = true;
-  btn.textContent = "⚡ Generating...";
+function onCustomDateInputChange() {
+  const select = document.getElementById("rotaPeriodSelect");
+  const sInput = document.getElementById("rotaCustomStartDate");
+  const eInput = document.getElementById("rotaCustomEndDate");
+  if (!select || !sInput || !eInput) return;
+  const sVal = sInput.value;
+  const eVal = eInput.value;
+  if (sVal === "2026-09-28" && eVal === "2026-10-25") select.value = "P10_2026";
+  else if (sVal === "2026-10-26" && eVal === "2026-11-22") select.value = "P11_2026";
+  else if (sVal === "2026-11-23" && eVal === "2026-12-20") select.value = "P12_2026";
+  else select.value = "CUSTOM";
+}
+
+async function triggerGenerateRota(ev) {
+  const select = document.getElementById("rotaPeriodSelect");
+  const sInput = document.getElementById("rotaCustomStartDate");
+  const eInput = document.getElementById("rotaCustomEndDate");
+  const opt = select ? select.options[select.selectedIndex] : null;
+
+  const sDate = (sInput && sInput.value) ? sInput.value : (opt && opt.dataset.start ? opt.dataset.start : "2026-09-28");
+  const eDate = (eInput && eInput.value) ? eInput.value : (opt && opt.dataset.end ? opt.dataset.end : "2026-10-25");
+
+  if (!sDate || !eDate) {
+    alert("Please select both a Start Date and an End Date.");
+    return;
+  }
+  if (sDate > eDate) {
+    alert("Start Date cannot be after End Date.");
+    return;
+  }
+
+  let pLabel = `Custom Period (${formatShortDate(sDate)} – ${formatShortDate(eDate)})`;
+  if (opt && opt.value !== "CUSTOM" && opt.dataset.start === sDate && opt.dataset.end === eDate) {
+    pLabel = opt.text;
+  }
+
+  const btn = (ev && ev.currentTarget) ? ev.currentTarget : (typeof event !== "undefined" && event ? event.target : null);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⚡ Generating...";
+  }
 
   try {
     const res = await apiFetch("/api/rota/generate", {
@@ -1592,12 +1681,15 @@ async function triggerGenerateRota() {
       body: JSON.stringify({ startDate: sDate, endDate: eDate, periodLabel: pLabel })
     });
     currentRotaData = res;
+    selectedWeek = "all";
     renderRotaView();
   } catch (err) {
     alert("Generation error: " + err.message);
   } finally {
-    btn.disabled = false;
-    btn.textContent = "⚡ Generate Rota";
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ Generate Rota";
+    }
   }
 }
 
@@ -3154,9 +3246,9 @@ async function exportRotaToExcel() {
           const wsDay = workbook.addWorksheet(`Week ${w.num} - Day`, { views: [{ showGridLines: true }] });
 
           // Title banner
-          wsDay.mergeCells('A1:K1');
+          wsDay.mergeCells(1, 1, 1, 4 + w.days.length);
           const titleCellDay = wsDay.getCell('A1');
-          titleCellDay.value = `CARE HOME ROTA — WEEK ${w.num} DAY SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[6].dateString)})`;
+          titleCellDay.value = `CARE HOME ROTA — WEEK ${w.num} DAY SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[w.days.length - 1].dateString)})`;
           titleCellDay.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3542' } };
           titleCellDay.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
           titleCellDay.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3168,13 +3260,7 @@ async function exportRotaToExcel() {
             "Staff Name",
             "Role",
             "Contract Target",
-            `${w.days[0].dayName.substring(0, 3)} (${formatShortDate(w.days[0].dateString)})`,
-            `${w.days[1].dayName.substring(0, 3)} (${formatShortDate(w.days[1].dateString)})`,
-            `${w.days[2].dayName.substring(0, 3)} (${formatShortDate(w.days[2].dateString)})`,
-            `${w.days[3].dayName.substring(0, 3)} (${formatShortDate(w.days[3].dateString)})`,
-            `${w.days[4].dayName.substring(0, 3)} (${formatShortDate(w.days[4].dateString)})`,
-            `${w.days[5].dayName.substring(0, 3)} (${formatShortDate(w.days[5].dateString)})`,
-            `${w.days[6].dayName.substring(0, 3)} (${formatShortDate(w.days[6].dateString)})`,
+            ...w.days.map(d => `${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`),
             "Day Shifts Worked"
           ];
           applyHeaderStyle(headerRowDay, "FF0B3542", "FFFFFFFF");
@@ -3183,13 +3269,7 @@ async function exportRotaToExcel() {
             { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
             { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
             { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            ...w.days.map(() => ({ width: 14, alignment: { vertical: 'middle', horizontal: 'center' } })),
             { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } }
           ];
 
@@ -3265,9 +3345,9 @@ async function exportRotaToExcel() {
           const wsNight = workbook.addWorksheet(`Week ${w.num} - Night`, { views: [{ showGridLines: true }] });
 
           // Title banner
-          wsNight.mergeCells('A1:K1');
+          wsNight.mergeCells(1, 1, 1, 4 + w.days.length);
           const titleCellNight = wsNight.getCell('A1');
-          titleCellNight.value = `CARE HOME ROTA — WEEK ${w.num} NIGHT SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[6].dateString)})`;
+          titleCellNight.value = `CARE HOME ROTA — WEEK ${w.num} NIGHT SHIFT SCHEDULE (${formatShortDate(w.days[0].dateString)} – ${formatShortDate(w.days[w.days.length - 1].dateString)})`;
           titleCellNight.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E1B4B' } };
           titleCellNight.font = { name: 'Segoe UI', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
           titleCellNight.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -3279,13 +3359,7 @@ async function exportRotaToExcel() {
             "Staff Name",
             "Role",
             "Contract Target",
-            `${w.days[0].dayName.substring(0, 3)} (${formatShortDate(w.days[0].dateString)})`,
-            `${w.days[1].dayName.substring(0, 3)} (${formatShortDate(w.days[1].dateString)})`,
-            `${w.days[2].dayName.substring(0, 3)} (${formatShortDate(w.days[2].dateString)})`,
-            `${w.days[3].dayName.substring(0, 3)} (${formatShortDate(w.days[3].dateString)})`,
-            `${w.days[4].dayName.substring(0, 3)} (${formatShortDate(w.days[4].dateString)})`,
-            `${w.days[5].dayName.substring(0, 3)} (${formatShortDate(w.days[5].dateString)})`,
-            `${w.days[6].dayName.substring(0, 3)} (${formatShortDate(w.days[6].dateString)})`,
+            ...w.days.map(d => `${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`),
             "Night Shifts Worked"
           ];
           applyHeaderStyle(headerRowNight, "FF1E1B4B", "FFFFFFFF");
@@ -3294,13 +3368,7 @@ async function exportRotaToExcel() {
             { width: 26, alignment: { vertical: 'middle', horizontal: 'left' } },
             { width: 18, alignment: { vertical: 'middle', horizontal: 'left' } },
             { width: 16, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
-            { width: 14, alignment: { vertical: 'middle', horizontal: 'center' } },
+            ...w.days.map(() => ({ width: 14, alignment: { vertical: 'middle', horizontal: 'center' } })),
             { width: 18, alignment: { vertical: 'middle', horizontal: 'center' } }
           ];
 
@@ -3717,7 +3785,7 @@ function preparePrintContainer() {
         <div class="print-sheet-header">
           <div>
             <div class="print-sheet-title">CARE HOME ROTA &bull; WEEK ${w.num} DAY SHIFT SCHEDULE</div>
-            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)}</div>
+            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[w.days.length - 1].dateString)}</div>
           </div>
         </div>
 
@@ -3791,7 +3859,7 @@ function preparePrintContainer() {
         <div class="print-sheet-header">
           <div>
             <div class="print-sheet-title">CARE HOME ROTA &bull; WEEK ${w.num} NIGHT SHIFT SCHEDULE</div>
-            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[6].dateString)}</div>
+            <div class="print-sheet-period">${formatShortDate(w.days[0].dateString)} &ndash; ${formatShortDate(w.days[w.days.length - 1].dateString)}</div>
           </div>
         </div>
 
@@ -3945,7 +4013,16 @@ function applyStaffFilters() {
 
   tbody.innerHTML = filtered.map(emp => `
     <tr>
-      <td><strong>${esc(emp.name)}</strong></td>
+      <td>
+        <strong>${esc(emp.name)}</strong>
+        ${(emp.family_partners && emp.family_partners.length > 0) ? `
+          <div style="margin-top:3px;">
+            <span style="background:#fdf2f8; color:#be185d; border:1px solid #fbcfe8; padding:1px 6px; border-radius:4px; font-size:10.5px; font-weight:700;">
+              👨‍👩‍👧‍👦 Family: ${emp.family_partners.map(fp => esc(fp.name)).join(', ')}
+            </span>
+          </div>
+        ` : ''}
+      </td>
       <td>${esc(emp.designation)}</td>
       <td>
         ${emp.floor ? `<span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">🏢 ${esc(emp.floor)}</span>` : '<span style="color:#94a3b8; font-size:12px;">—</span>'}
@@ -4084,7 +4161,16 @@ async function renderEmployeesView() {
                 </tr>
               ` : filtered.map(emp => `
                 <tr>
-                  <td><strong>${esc(emp.name)}</strong></td>
+                  <td>
+                    <strong>${esc(emp.name)}</strong>
+                    ${(emp.family_partners && emp.family_partners.length > 0) ? `
+                      <div style="margin-top:3px;">
+                        <span style="background:#fdf2f8; color:#be185d; border:1px solid #fbcfe8; padding:1px 6px; border-radius:4px; font-size:10.5px; font-weight:700;">
+                          👨‍👩‍👧‍👦 Family: ${emp.family_partners.map(fp => esc(fp.name)).join(', ')}
+                        </span>
+                      </div>
+                    ` : ''}
+                  </td>
                   <td>${esc(emp.designation)}</td>
                   <td>
                     ${emp.floor ? `<span style="background:#f1f5f9; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:600; font-size:12px;">🏢 ${esc(emp.floor)}</span>` : '<span style="color:#94a3b8; font-size:12px;">—</span>'}
@@ -4773,13 +4859,13 @@ async function renderPreferencesView() {
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Staff Preferences & Repeating Shift Patterns</div>
+            <div class="card-title">Staff Preferences, Repeating Patterns & Family Links</div>
             <div style="font-size:13px; color:#64748b;">
-              Supports Specific Dates, Recurring Weekdays, and Custom Repeating Patterns (e.g. 4 Days Work / 2 Days Off).
+              Supports Specific Dates, Recurring Weekdays, Repeating Patterns (e.g. 4 Days Work / 2 Days Off), and Family Members Together.
             </div>
           </div>
           <button class="btn btn-primary" onclick="openPreferenceModal()">
-            + Add Preference / Pattern
+            + Add Preference / Family Link
           </button>
         </div>
 
@@ -4800,7 +4886,12 @@ async function renderPreferencesView() {
               ${list.length === 0 ? `<tr><td colspan="7" style="text-align:center; padding:30px; color:#64748b;">No preferences or patterns registered.</td></tr>` : list.map(p => {
       let detail = "";
       let typeBadge = "";
-      if (p.type === "pattern") {
+      let prefPill = "";
+      if (p.type === "family") {
+        typeBadge = `<span style="background:#fdf2f8; color:#be185d; border:1px solid #fbcfe8; padding:2px 8px; border-radius:4px; font-weight:700;">👨‍👩‍👧‍👦 Family Together</span>`;
+        detail = `Linked with <strong>${esc(p.partner_name || p.target_day || 'Family Partner')}</strong> ${p.partner_designation ? `(${esc(p.partner_designation)})` : ''} — Same Working Days & Weekends Off`;
+        prefPill = `<span class="status-pill status-D" style="background:#fdf2f8; color:#be185d; border:1px solid #fbcfe8;">Together 🤝</span>`;
+      } else if (p.type === "pattern") {
         typeBadge = `<span style="background:#e0e7ff; color:#3730a3; padding:2px 8px; border-radius:4px; font-weight:700;">🔁 Pattern</span>`;
         detail = `<strong>${p.pattern_work_days} Days ON / ${p.pattern_off_days} Days OFF</strong> (Anchor: ${p.pattern_start_date || 'N/A'})`;
       } else if (p.type === "day") {
@@ -4811,17 +4902,21 @@ async function renderPreferencesView() {
         detail = `Date: <strong>${p.target_date}</strong>`;
       }
 
+      if (!prefPill) {
+        prefPill = `
+          <span class="status-pill ${p.preference === 'prefer' ? 'status-D' : 'status-L'}">
+            ${p.preference === 'prefer' ? 'Prefer Work' : 'Unavailable / OFF'}
+          </span>
+        `;
+      }
+
       return `
                   <tr>
                     <td><strong>${esc(p.employee_name)}</strong></td>
                     <td>${esc(p.designation)}</td>
                     <td>${typeBadge}</td>
                     <td>${detail}</td>
-                    <td>
-                      <span class="status-pill ${p.preference === 'prefer' ? 'status-D' : 'status-L'}">
-                        ${p.preference === 'prefer' ? 'Prefer Work' : 'Unavailable / OFF'}
-                      </span>
-                    </td>
+                    <td>${prefPill}</td>
                     <td>${esc(p.remarks || '—')}</td>
                     <td style="text-align:right;">
                       <button class="btn btn-danger" style="padding:4px 10px; font-size:12px;" onclick="deletePreference(${p.id})">
@@ -4909,9 +5004,9 @@ async function openPreferenceModal() {
   window.prefSelectedDates = [];
   const employees = await apiFetch("/api/employees");
 
-  // Determine active 28-day cycle dates for quick multi-select buttons
+  // Determine active cycle dates for quick multi-select buttons
   let cycleDays = [];
-  if (currentRotaData && currentRotaData.calendarDays && currentRotaData.calendarDays.length === 28) {
+  if (currentRotaData && currentRotaData.calendarDays && currentRotaData.calendarDays.length > 0) {
     cycleDays = currentRotaData.calendarDays;
   } else {
     cycleDays = Array.from({ length: 28 }, (_, i) => {
@@ -4926,7 +5021,7 @@ async function openPreferenceModal() {
     <div class="modal-overlay" onclick="closeModal(event)">
       <div class="modal-card" onclick="event.stopPropagation()">
         <div class="modal-header">
-          <h3>Add Staff Preference / Pattern</h3>
+          <h3>Add Staff Preference / Pattern / Family Link</h3>
           <button class="btn btn-secondary" onclick="closeModal()">✕</button>
         </div>
         <form onsubmit="savePreference(event)">
@@ -4934,7 +5029,7 @@ async function openPreferenceModal() {
             <div class="form-group">
               <label>Staff Member</label>
               <select id="prefEmpId" class="form-control" required>
-                ${employees.map(e => `<option value="${e.id}">${esc(e.name)} (${esc(e.designation)})</option>`).join('')}
+                ${employees.map(e => `<option value="${e.id}">${esc(e.name)} (${esc(e.designation)}${e.floor ? ' • ' + esc(e.floor) : ''})</option>`).join('')}
               </select>
             </div>
 
@@ -4944,7 +5039,21 @@ async function openPreferenceModal() {
                 <option value="date" selected>📅 Specific Date(s) (Multi-Select Supported)</option>
                 <option value="pattern">🔁 Repeating Pattern (e.g. 4 on / 2 off)</option>
                 <option value="day">🔄 Recurring Weekday</option>
+                <option value="family">👨‍👩‍👧‍👦 Family Members Together (Same Working Days & Weekends Off)</option>
               </select>
+            </div>
+
+            <!-- FAMILY MEMBERS TOGETHER SECTION -->
+            <div id="familySection" style="display:none; background:#fdf2f8; padding:14px; border-radius:8px; margin-bottom:16px; border:1px solid #fbcfe8;">
+              <div class="form-group" style="margin-bottom:8px;">
+                <label style="font-size:12.5px; font-weight:700; color:#9d174d;">Select Linked Family Member</label>
+                <select id="prefFamilyPartnerId" class="form-control">
+                  ${employees.map((e, idx) => `<option value="${e.id}" ${idx === 1 ? 'selected' : ''}>${esc(e.name)} (${esc(e.designation)}${e.floor ? ' • ' + esc(e.floor) : ''})</option>`).join('')}
+                </select>
+              </div>
+              <div style="font-size:12px; color:#831843; line-height:1.45;">
+                🤝 <strong>Synchronized Scheduling:</strong> Linked family members are automatically placed in the same Weekend Cohort (A or B) and prioritized to work the exact same weekdays and rest on the same days off.
+              </div>
             </div>
 
             <!-- PATTERN INPUTS -->
@@ -5019,7 +5128,7 @@ async function openPreferenceModal() {
               </div>
             </div>
 
-            <div class="form-group">
+            <div id="prefIntentGroup" class="form-group">
               <label>Preference Intent</label>
               <select id="prefIntent" class="form-control">
                 <option value="prefer">Prefer to Work</option>
@@ -5029,7 +5138,7 @@ async function openPreferenceModal() {
 
             <div class="form-group">
               <label>Remarks</label>
-              <input type="text" id="prefRemarks" class="form-control" placeholder="e.g. Specific requested days off">
+              <input type="text" id="prefRemarks" class="form-control" placeholder="e.g. Specific requested days off / Family carpool">
             </div>
           </div>
           <div class="modal-footer">
@@ -5057,6 +5166,10 @@ function togglePrefInputs() {
   document.getElementById("patternSection").style.display = type === "pattern" ? "block" : "none";
   document.getElementById("dateSection").style.display = type === "date" ? "block" : "none";
   document.getElementById("daySection").style.display = type === "day" ? "block" : "none";
+  const famSec = document.getElementById("familySection");
+  if (famSec) famSec.style.display = type === "family" ? "block" : "none";
+  const intentGrp = document.getElementById("prefIntentGroup");
+  if (intentGrp) intentGrp.style.display = type === "family" ? "none" : "block";
 }
 
 async function savePreference(e) {
@@ -5067,6 +5180,31 @@ async function savePreference(e) {
   const pattern_off_days = document.getElementById("patternOff") ? document.getElementById("patternOff").value : null;
   const preference = document.getElementById("prefIntent").value;
   const remarks = document.getElementById("prefRemarks").value;
+
+  if (type === "family") {
+    const partnerId = document.getElementById("prefFamilyPartnerId") ? document.getElementById("prefFamilyPartnerId").value : "";
+    if (!partnerId || String(partnerId) === String(employee_id)) {
+      alert("Please select a different staff member to link as a family member.");
+      return;
+    }
+    try {
+      await apiFetch("/api/preferences", {
+        method: "POST",
+        body: JSON.stringify({
+          employee_id,
+          type: "family",
+          target_day: partnerId,
+          preference: "prefer",
+          remarks: remarks || "Family Members Together (Same Working Days & Weekends Off)"
+        })
+      });
+      closeModal();
+      renderPreferencesView();
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+    return;
+  }
 
   let target_dates = [];
   if (type === "date") {

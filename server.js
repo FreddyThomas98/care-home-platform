@@ -152,6 +152,27 @@ app.delete("/api/users/:id", authenticateToken, requireAdmin, async (req, res) =
 app.get("/api/employees", authenticateToken, async (req, res) => {
   try {
     const rows = await db.queryAll("SELECT * FROM employees ORDER BY staff_type ASC, designation ASC, name ASC");
+    const famPrefs = await db.queryAll("SELECT employee_id, target_day FROM preferences WHERE type = 'family'");
+    const empById = {};
+    rows.forEach(r => { empById[String(r.id)] = r; });
+
+    const adj = {};
+    (famPrefs || []).forEach(fp => {
+      const a = String(fp.employee_id || "").trim();
+      const b = String(fp.target_day || "").trim();
+      if (a && b && a !== b && empById[a] && empById[b]) {
+        if (!adj[a]) adj[a] = new Set();
+        if (!adj[b]) adj[b] = new Set();
+        adj[a].add(b);
+        adj[b].add(a);
+      }
+    });
+
+    rows.forEach(r => {
+      const peers = adj[String(r.id)] ? Array.from(adj[String(r.id)]) : [];
+      r.family_partners = peers.map(pid => empById[pid] ? { id: pid, name: empById[pid].name } : null).filter(Boolean);
+    });
+
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -464,9 +485,11 @@ app.delete("/api/leave/:id", authenticateToken, async (req, res) => {
 app.get("/api/preferences", authenticateToken, async (req, res) => {
   try {
     const rows = await db.queryAll(`
-      SELECT p.*, e.name as employee_name, e.designation
+      SELECT p.*, e.name as employee_name, e.designation,
+             partner.name as partner_name, partner.designation as partner_designation, partner.floor as partner_floor
       FROM preferences p
       JOIN employees e ON p.employee_id = e.id
+      LEFT JOIN employees partner ON p.type = 'family' AND p.target_day = partner.id
       ORDER BY p.id DESC
     `);
     res.json(rows);
@@ -490,6 +513,32 @@ app.post("/api/preferences", authenticateToken, async (req, res) => {
   } = req.body;
 
   try {
+    // Support Family Member Linking (Change #2: Family Members Together)
+    if (type === "family") {
+      const partnerId = String(target_day || target_date || "").trim();
+      if (!employee_id || !partnerId || String(employee_id) === partnerId) {
+        return res.status(400).json({ error: "Please select two different staff members to link as family members." });
+      }
+      // Remove any existing duplicate link between these two employees before inserting
+      await db.execute(
+        `DELETE FROM preferences WHERE type = 'family' AND ((employee_id = ? AND target_day = ?) OR (employee_id = ? AND target_day = ?))`,
+        [employee_id, partnerId, partnerId, employee_id]
+      );
+      await db.execute(`
+        INSERT INTO preferences (
+          employee_id, type, target_date, target_day,
+          pattern_work_days, pattern_off_days, pattern_start_date,
+          preference, remarks
+        )
+        VALUES (?, 'family', NULL, ?, NULL, NULL, NULL, 'prefer', ?)
+      `, [
+        employee_id,
+        partnerId,
+        remarks || "Family Members Together (Same Working Days & Weekends Off)"
+      ]);
+      return res.json({ success: true });
+    }
+
     // Support batch multi-date preferences
     if (type === "date" && (Array.isArray(target_dates) || (typeof target_date === "string" && target_date.includes(",")))) {
       const rawDates = Array.isArray(target_dates) ? target_dates : target_date.split(",");
@@ -628,9 +677,16 @@ app.post("/api/rota/generate", authenticateToken, async (req, res) => {
     const { startDate, endDate, periodLabel } = req.body;
     const sDate = startDate || "2026-09-28";
     const eDate = endDate || "2026-10-25";
-    const pLabel = periodLabel || `Period 10 (28 Sep 2026 – 25 Oct 2026)`;
 
+    if (sDate > eDate) {
+      return res.status(400).json({ error: "Start Date cannot be after End Date." });
+    }
+
+    const pLabel = periodLabel || `Custom Period (${sDate} – ${eDate})`;
     const result = await generateRotaForPeriod(sDate, eDate, pLabel);
+
+    // Overwrite any existing saved rota for the exact same date range (no duplicate clutter)
+    await db.execute("DELETE FROM saved_rotas WHERE start_date = ? AND end_date = ?", [sDate, eDate]);
 
     await db.execute(`
       INSERT INTO saved_rotas (period_id, period_label, start_date, end_date, rota_json)
@@ -642,6 +698,17 @@ app.post("/api/rota/generate", authenticateToken, async (req, res) => {
       eDate,
       JSON.stringify(result)
     ]);
+
+    // Auto-prune old history beyond the 12 most recent periods so database stays compact
+    try {
+      const allSaved = await db.queryAll("SELECT id FROM saved_rotas ORDER BY id DESC");
+      if (allSaved && allSaved.length > 12) {
+        const idsToDelete = allSaved.slice(12).map(r => r.id);
+        for (const oldId of idsToDelete) {
+          await db.execute("DELETE FROM saved_rotas WHERE id = ?", [oldId]);
+        }
+      }
+    } catch (pruneErr) {}
 
     res.json(result);
   } catch (err) {
