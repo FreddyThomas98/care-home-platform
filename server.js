@@ -750,6 +750,8 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
 
     // Fetch approved leaves to synchronize specific leave codes (AL, SL, ML, CL)
     const approvedLeaves = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
+    // Fetch specific-date unavailable/off preferences to synchronize 'R' indicator
+    const dateOffPrefs = await db.queryAll("SELECT * FROM preferences WHERE type = 'date' AND (preference = 'unavailable' OR preference = 'off')");
     const getLeaveCode = (type) => {
       if (!type) return "AL";
       const lt = type.trim().toLowerCase();
@@ -794,6 +796,9 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
       } else if (r.status === "L") {
         r.status = "AL";
         r.shift = "OFF";
+      } else if (r.shift === "OFF" && (r.status === "OFF" || r.status === "R")) {
+        const hasReqDateOff = (dateOffPrefs || []).some(p => String(p.employee_id) === String(r.employeeId) && p.target_date === r.date);
+        r.status = hasReqDateOff ? "R" : "OFF";
       }
     });
 

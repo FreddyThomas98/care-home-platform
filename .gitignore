@@ -6,6 +6,7 @@ yarn-error.log*
 # SQLite temporary WAL and SHM files
 data/*.db-wal
 data/*.db-shm
+data/render_full_backup*.json
 
 # OS generated files
 .DS_Store

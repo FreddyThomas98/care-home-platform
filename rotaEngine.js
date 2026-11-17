@@ -627,6 +627,16 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   }
 
+  // Helper: Check if employee specifically requested this exact date off (type === 'date' AND preference === 'unavailable' | 'off')
+  function isSpecificDateRequestedOff(empId, dStr) {
+    return prefList.some(p => {
+      if (String(p.employee_id) !== String(empId)) return false;
+      if (p.type !== "date") return false;
+      if (p.preference !== "unavailable" && p.preference !== "off") return false;
+      return p.target_date === dStr;
+    });
+  }
+
   // Helper: Check positive preference
   function hasPositivePref(empId, dStr, dayName) {
     return prefList.some(p => {
@@ -2077,6 +2087,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       else if (isLeaveStatus(asgn.status) || asgn.isLeave) leaveShifts++;
       else if (asgn.status === "TR") trainingShifts++;
 
+      const finalStatus = (asgn.shift === "OFF" && asgn.status === "OFF" && isSpecificDateRequestedOff(st.id, day.dateString))
+        ? "R"
+        : asgn.status;
+
       flatRota.push({
         date: day.dateString,
         dayName: day.dayName,
@@ -2087,7 +2101,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         contractHours: st.contractHours,
         shiftHours: st.shiftHours,
         shift: asgn.shift,
-        status: asgn.status,
+        status: finalStatus,
         coveringRole: asgn.coveringRole || st.designation,
         isContractFulfillment: Boolean(asgn.isContractFulfillment)
       });

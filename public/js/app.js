@@ -776,6 +776,7 @@ async function renderRotaView() {
             <div class="legend-item"><span class="status-pill status-ML">ML</span> Maternity Leave</div>
             <div class="legend-item"><span class="status-pill status-CL">CL</span> Compassionate</div>
             <div class="legend-item"><span class="status-pill status-TR">TR</span> Training</div>
+            <div class="legend-item"><span style="font-weight:800; color:#0f172a; padding:0 4px;">R</span> Requested Off</div>
           </div>
         </div>
       </div>
@@ -915,6 +916,9 @@ async function renderRotaView() {
               const status = rec ? rec.status : "OFF";
               if (status === "OFF" || !status) {
                 return `<td style="text-align:center;"></td>`;
+              }
+              if (status === "R") {
+                return `<td style="text-align:center; font-weight:800; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</td>`;
               }
               return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
             }).join('')}
@@ -1057,6 +1061,9 @@ async function renderRotaView() {
             const status = rec ? rec.status : "OFF";
             if (status === "OFF" || !status) {
               return `<td style="text-align:center;"></td>`;
+            }
+            if (status === "R") {
+              return `<td style="text-align:center; font-weight:800; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</td>`;
             }
             return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
           }).join('')}
@@ -1288,6 +1295,7 @@ function renderMonthlyMatrixHtml(data) {
           <span><span class="status-pill status-ML">ML</span> Maternity</span>
           <span><span class="status-pill status-CL">CL</span> Compassionate</span>
           <span><span class="status-pill status-TR">TR</span> Training</span>
+          <span><strong style="color:#0f172a; padding:0 3px;">R</strong> Requested Off</span>
         </div>
       </div>
 
@@ -1387,6 +1395,7 @@ function renderMonthlyMatrixHtml(data) {
           pill = `<span class="status-pill status-${status}" style="padding:2px 4px; font-size:10px;" title="${status} Leave">${status}</span>`;
         }
         else if (status === "TR") pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="Training">TR</span>`;
+        else if (status === "R") pill = `<span style="font-weight:800; font-size:11px; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</span>`;
 
         return `
                           <td class="${isWkStart ? 'week-sep-left' : ''} ${d.isWeekend ? 'weekend-hdr' : ''}" style="text-align:center; padding:3px 1px; border-right:1px solid #f1f5f9;">
@@ -3103,13 +3112,15 @@ function renderShortageManagementView() {
                           </td>
                         `;
         } else {
-          // OFF Drop Target Cell (blank, no OFF label)
+          // OFF Drop Target Cell (blank for OFF, plain R if specific date requested off)
           return `
                           <td style="text-align:center; padding:3px 2px; border-right:1px solid #f1f5f9; vertical-align:middle;">
                             <div class="drop-target-cell"
                                  ondragover="handleShiftDragOver(event)"
                                  ondragleave="handleShiftDragLeave(event)"
-                                 ondrop="handleShiftDrop(event, '${st.employeeId}', '${d.dateString}')">
+                                 ondrop="handleShiftDrop(event, '${st.employeeId}', '${d.dateString}')"
+                                 title="${status === 'R' ? 'Requested Off (Specific Date Preference)' : ''}">
+                              ${status === 'R' ? '<span style="font-weight:800; font-size:12px; color:#0f172a;">R</span>' : ''}
                             </div>
                           </td>
                         `;
@@ -3231,6 +3242,8 @@ async function exportRotaToExcel() {
           } else if (val === 'TR') {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF1E40AF' } };
+          } else if (val === 'R') {
+            cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
           }
         });
         row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
@@ -3828,6 +3841,9 @@ function preparePrintContainer() {
           if (status === "OFF" || !status) {
             return `<td style="text-align:center;"></td>`;
           }
+          if (status === "R") {
+            return `<td style="text-align:center; font-weight:800; color:#0f172a;">R</td>`;
+          }
           return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
         }).join('')}
                     </tr>
@@ -3889,6 +3905,9 @@ function preparePrintContainer() {
         const status = rec ? rec.status : "OFF";
         if (status === "OFF" || !status) {
           return `<td style="text-align:center;"></td>`;
+        }
+        if (status === "R") {
+          return `<td style="text-align:center; font-weight:800; color:#0f172a;">R</td>`;
         }
         return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
       }).join('')}
