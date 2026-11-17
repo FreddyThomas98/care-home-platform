@@ -93,7 +93,16 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   function getRequiredQuota(role, shiftType, dayInfo) {
     const base = requirements[role] ? (shiftType === "D" ? requirements[role].day : requirements[role].night) : 0;
     if (base <= 0) return 0;
-    const maxDays = roleDaysPerWeek[role] !== undefined ? roleDaysPerWeek[role] : 7;
+    let maxDays = roleDaysPerWeek[role] !== undefined ? roleDaysPerWeek[role] : 7;
+    // Pooled floor lead roles (Staff Nurse / Team Leader / Advanced Team Leader) cover 7-day floor lead pools
+    if (shiftType === "D" && (role === "Staff Nurse" || role === "Team Leader" || role === "Advanced Team Leader")) {
+      maxDays = Math.max(
+        maxDays,
+        roleDaysPerWeek["Staff Nurse"] || 7,
+        roleDaysPerWeek["Team Leader"] || 7,
+        roleDaysPerWeek["Advanced Team Leader"] || 7
+      );
+    }
     // Monday = 0, Tuesday = 1, ..., Sunday = 6
     const dIdxInWeek = (dayInfo.dayOfWeek + 6) % 7;
     if (dIdxInWeek >= maxDays) return 0;
@@ -124,7 +133,8 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   }
 
   function getFloorPoolQuota(floorName, roleName, dayInfo) {
-    const maxDays = roleDaysPerWeek[roleName] !== undefined ? roleDaysPerWeek[roleName] : 7;
+    const poolRoles = getFloorPoolRoles(floorName, roleName);
+    const maxDays = Math.max(...poolRoles.map(r => roleDaysPerWeek[r] !== undefined ? roleDaysPerWeek[r] : 7));
     const dIdxInWeek = (dayInfo.dayOfWeek + 6) % 7;
     if (dIdxInWeek >= maxDays) return 0;
 
@@ -393,31 +403,63 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     };
   });
 
-  // Helper to align fractional contract weekly targets with weekend cohort on standard 4-week cycles
+  // Helper to align fractional contract weekly targets with weekend cohort on standard 4-week & custom cycles
   function syncFractionalWeeklyTargetsForCohort(st) {
-    if (!st.isRound && isStandard28DayCycle) {
-      if (st.contractHours === 38.5) {
-        st.weeklyTargets = st.weekendCohort === "A" ? [4, 3, 4, 3] : [3, 4, 3, 4];
-      } else if (st.contractHours === 40) {
-        st.weeklyTargets = st.weekendCohort === "A" ? [4, 3, 4, 3] : [3, 4, 3, 4];
-      } else if (st.contractHours === 15) {
-        st.weeklyTargets = st.weekendCohort === "A" ? [1, 1, 2, 1] : [1, 2, 1, 1];
+    if (!st.isRound) {
+      if (isStandard28DayCycle) {
+        if (st.contractHours === 38.5 || st.contractHours === 40) {
+          st.weeklyTargets = st.weekendCohort === "A" ? [4, 3, 4, 3] : [3, 4, 3, 4];
+        } else if (st.contractHours === 15) {
+          st.weeklyTargets = st.weekendCohort === "A" ? [1, 1, 2, 1] : [1, 2, 1, 1];
+        }
+        st.totalMonthlyTargetShifts = st.weeklyTargets.reduce((a, b) => a + b, 0);
+      } else if (st.contractHours === 38.5 || st.contractHours === 40) {
+        const nominalPeriodContractHours = Math.round(st.contractHours * totalPeriodWeeksFloat * 10) / 10;
+        let remainingShifts = Math.floor((nominalPeriodContractHours + 0.001) / st.shiftHours);
+        const newTargets = [];
+        for (let w = 0; w < weeks.length; w++) {
+          const wDayCount = weeks[w].length;
+          const isWkWork = (w % 2 === 0 && st.weekendCohort === "A") || (w % 2 === 1 && st.weekendCohort === "B");
+          const fullWeekTarget = isWkWork ? 4 : 3;
+          if (w === weeks.length - 1) {
+            newTargets.push(Math.max(0, Math.min(5, remainingShifts)));
+            remainingShifts = 0;
+          } else {
+            const target = wDayCount === 7 ? fullWeekTarget : Math.round(fullWeekTarget * (wDayCount / 7));
+            const clamped = Math.max(0, Math.min(remainingShifts, target));
+            newTargets.push(clamped);
+            remainingShifts -= clamped;
+          }
+        }
+        st.weeklyTargets = newTargets;
+        st.totalMonthlyTargetShifts = st.weeklyTargets.reduce((a, b) => a + b, 0);
       }
-      st.totalMonthlyTargetShifts = st.weeklyTargets.reduce((a, b) => a + b, 0);
     }
   }
 
-  // Assign alternating weekend cohorts (A vs B) PER FLOOR & ROLE (Change #1)
-  // Cohort A: Works W1 & W3 weekends (weeks 0 & 2)
-  // Cohort B: Works W2 & W4 weekends (weeks 1 & 3)
+  // Assign alternating weekend cohorts (A vs B) PER FLOOR POOL & ROLE (Change #1)
+  // Cohort A: Works even-indexed weeks (W1, W3, W5...)
+  // Cohort B: Works odd-indexed weeks (W2, W4, W6...)
+  // Pooled floor roles (e.g. Top Floor Staff Nurse + Advanced Team Leader + Team Leader) are grouped together
+  // so they alternate weekends with each other instead of landing in the same cohort.
   const roleGroups = {};
   Object.values(empState).forEach(st => {
-    const k = st.staffType + "_" + st.designation + "_" + (st.floor || "");
+    const poolKey = (st.staffType === "D" && st.floor && VALID_FLOORS.includes(st.floor))
+      ? getFloorPoolKey(st.floor, st.designation)
+      : st.designation;
+    const k = st.staffType + "_" + poolKey;
     if (!roleGroups[k]) roleGroups[k] = [];
     roleGroups[k].push(st);
   });
 
   Object.values(roleGroups).forEach(group => {
+    // Sort by floor first so staff on the same floor are adjacent and split 50/50 between Cohort A and Cohort B,
+    // while single-person floor roles also alternate A/B across floors.
+    group.sort((a, b) => {
+      const fCmp = (a.floor || "").localeCompare(b.floor || "");
+      if (fCmp !== 0) return fCmp;
+      return String(a.id).localeCompare(String(b.id));
+    });
     group.forEach((st, idx) => {
       st.weekendCohort = idx % 2 === 0 ? "A" : "B";
       syncFractionalWeeklyTargetsForCohort(st);
@@ -707,8 +749,16 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       }
       const shortfall = Math.max(0, pastTarget - state.totalShiftsWorked);
       const remainingMonthlyNeeded = Math.max(0, state.totalMonthlyTargetShifts - state.totalShiftsWorked);
-      const allowedThisWeek = Math.min(5, Math.min(remainingMonthlyNeeded, baseWeekly + shortfall));
-      state.workShiftsAllowedThisWeek = Math.max(0, allowedThisWeek - leaveCount - priorSameWeekWorked);
+      const isMaintenance = Boolean(state.designation && state.designation.toLowerCase().includes("maint"));
+      const maxWeeklyCap = isMaintenance ? 5 : Math.max(4, baseWeekly);
+      const allowedThisWeek = Math.min(maxWeeklyCap, Math.min(remainingMonthlyNeeded, baseWeekly + shortfall));
+      if (weekIdx === 0 && weekDays.length < 7 && priorSameWeekWorked > 0) {
+        const fullWeekTarget = Math.max(baseWeekly, Math.ceil(state.contractHours / state.shiftHours));
+        const remInSplitCalendarWeek = Math.max(0, fullWeekTarget - priorSameWeekWorked - leaveCount);
+        state.workShiftsAllowedThisWeek = Math.min(Math.max(0, allowedThisWeek - leaveCount), remInSplitCalendarWeek);
+      } else {
+        state.workShiftsAllowedThisWeek = Math.max(0, allowedThisWeek - leaveCount - priorSameWeekWorked);
+      }
       state.isWeekendWorkingWeek = (weekIdx % 2 === 0 && state.weekendCohort === "A") ||
                                    (weekIdx % 2 === 1 && state.weekendCohort === "B");
     });
@@ -824,6 +874,48 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       }
     }
 
+    // Helper: Check if candidate is working on an adjacent day (yesterday or tomorrow) to form clean consecutive blocks
+    function hasAdjacentWorkingShift(st, dayInfo) {
+      const dayIdx = calendarDays.findIndex(d => d.dateString === dayInfo.dateString);
+      const prev = getShiftAtCalendarIdx(st, dayIdx - 1);
+      const next = getShiftAtCalendarIdx(st, dayIdx + 1);
+      const prevWork = prev && (prev.shift === "D" || prev.shift === "N") && prev.status !== "TR";
+      const nextWork = next && (next.shift === "D" || next.shift === "N") && next.status !== "TR";
+      return Boolean(prevWork || nextWork);
+    }
+
+    // Helper: Weekday candidate comparator that protects Off-Weekend staff and builds consecutive blocks
+    function compareWeekdayCandidates(a, b, wDay) {
+      const needA = a.workShiftsAllowedThisWeek - a.shiftsThisWeek;
+      const needB = b.workShiftsAllowedThisWeek - b.shiftsThisWeek;
+
+      // Count remaining weekdays in this week from wDay onwards (inclusive)
+      const wDayIdxInWeek = weekDays.findIndex(d => d.dateString === wDay.dateString);
+      const remainingWeekdaysCount = weekDays.slice(wDayIdxInWeek).filter(d => !d.isWeekend).length;
+
+      // 1. Urgent Off-Weekend protection: if an off-weekend staff member needs all remaining weekdays to fulfill their weekly target, prioritize them first!
+      const aUrgentOffWk = (!a.isWeekendWorkingWeek && needA >= remainingWeekdaysCount) ? 1 : 0;
+      const bUrgentOffWk = (!b.isWeekendWorkingWeek && needB >= remainingWeekdaysCount) ? 1 : 0;
+      if (bUrgentOffWk !== aUrgentOffWk) return bUrgentOffWk - aUrgentOffWk;
+
+      // 2. Prioritize off-weekend cohort on weekdays so they complete their weekly shifts on Mon-Fri without spilling into weekends
+      const aOffWk = !a.isWeekendWorkingWeek ? 1 : 0;
+      const bOffWk = !b.isWeekendWorkingWeek ? 1 : 0;
+      if (bOffWk !== aOffWk && needA === needB) return bOffWk - aOffWk;
+
+      // 3. Higher remaining shifts needed this week
+      if (needB !== needA) return needB - needA;
+
+      if (bOffWk !== aOffWk) return bOffWk - aOffWk;
+
+      // 4. Prefer adjacent working shift to keep consecutive working blocks together
+      const aAdj = hasAdjacentWorkingShift(a, wDay) ? 1 : 0;
+      const bAdj = hasAdjacentWorkingShift(b, wDay) ? 1 : 0;
+      if (bAdj !== aAdj) return bAdj - aAdj;
+
+      return a.totalShiftsWorked - b.totalShiftsWorked;
+    }
+
     // Role order sorted by hierarchy rank
     const sortedRoles = Object.keys(requirements).sort((a, b) => getRoleRank(a) - getRoleRank(b));
 
@@ -845,6 +937,13 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             (st) => {
               if (!canTakeShift(st, dayInfo, shiftType, reqRole)) return false;
               if (isPatternWorkDay(st, dStr) === true) return true;
+              // On weekends, only honor non-pattern positive preferences if it's a specific date or their working weekend
+              if (dayInfo.isWeekend && !st.isWeekendWorkingWeek) {
+                const hasSpecificDatePref = prefList.some(p =>
+                  p.employee_id === st.id && p.preference === "prefer" && p.type === "date" && p.target_date === dStr
+                );
+                return hasSpecificDatePref;
+              }
               if (hasPositivePref(st.id, dStr, dayInfo.dayName)) return true;
               if (hasFamilyWorkingOnDate(st, dStr)) return true;
               if (hasFamilyPositivePrefOnDate(st, dStr, dayInfo.dayName)) return true;
@@ -856,7 +955,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
     });
 
-    // PASS 2: Weekend Working (Saturday & Sunday paired consecutively)
+    // PASS 2: Weekend Working (Saturday & Sunday paired consecutively for active weekend cohort)
     const satDay = weekDays.find(d => d.dayName === "Saturday");
     const sunDay = weekDays.find(d => d.dayName === "Sunday");
     const weekendDays = [satDay, sunDay].filter(Boolean);
@@ -888,6 +987,9 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
                 const bWorkedOther = otherDay && b.assignedShifts[otherDay.dateString] && b.assignedShifts[otherDay.dateString].shift !== "OFF";
                 if (bWorkedOther && !aWorkedOther) return 1;
                 if (aWorkedOther && !bWorkedOther) return -1;
+                if (a.weekendsWorkedCount !== b.weekendsWorkedCount) {
+                  return a.weekendsWorkedCount - b.weekendsWorkedCount;
+                }
                 return (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek);
               }
             );
@@ -896,44 +998,13 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
     }
 
-    // PASS 3: Adjacent Weekdays for Weekend Workers (Friday)
-    // Only pre-assign actual weekend workers on Friday so non-weekend staff aren't exhausted before Wed/Thu
-    const friDay = weekDays.find(d => d.dayName === "Friday");
-    if (friDay && weekendDays.length > 0) {
-      sortedRoles.forEach(reqRole => {
-        ["D", "N"].forEach(shiftType => {
-          const reqQuota = getRequiredQuota(reqRole, shiftType, friDay);
-          if (reqQuota <= 0) return;
-
-          const dStr = friDay.dateString;
-          if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
-
-          pickCandidatesIteratively(
-            friDay,
-            shiftType,
-            reqRole,
-            reqQuota,
-            (st) => {
-              if (!canTakeShift(st, friDay, shiftType, reqRole)) return false;
-              return weekendDays.some(wd => st.assignedShifts[wd.dateString] && st.assignedShifts[wd.dateString].shift !== "OFF");
-            },
-            (a, b) => {
-              const needA = a.workShiftsAllowedThisWeek - a.shiftsThisWeek;
-              const needB = b.workShiftsAllowedThisWeek - b.shiftsThisWeek;
-              return needB - needA;
-            }
-          );
-        });
-      });
-    }
-
-    // PASS 4: Weekdays for Staff Needing Shifts
+    // PASS 3 & 4: Weekdays for Staff Needing Shifts (Off-Weekend Staff Prioritized so their Weekends Stay Off)
     // Sub-Pass 4A ensures every weekday (including Wed/Thu/Fri) gets a minimum safe base (never 0) first,
     // and Sub-Pass 4B then fills days all the way to full 100% quota so we keep maximum full green days.
     const weekdaysOnly = weekDays.filter(d => !d.isWeekend);
     sortedRoles.forEach(reqRole => {
       ["D", "N"].forEach(shiftType => {
-        // Sub-Pass 4A: Minimum Safe Base across all weekdays (prevents 0-allotted days on Wed/Thu)
+        // Sub-Pass 4A: Minimum Safe Base across all weekdays (prevents 0-allotted days on Wed/Thu/Fri)
         weekdaysOnly.forEach(wDay => {
           const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
           if (reqQuota <= 0) return;
@@ -947,21 +1018,25 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               if (fQuota <= 0) return;
               const fSafeBase = fQuota >= 4 ? Math.ceil(fQuota * 0.6) : (fQuota >= 2 ? Math.ceil(fQuota * 0.5) : 1);
               const poolKey = getFloorPoolKey(floorName, reqRole);
+              const poolRoles = getFloorPoolRoles(floorName, reqRole);
 
               while (
-                (dailyFilled[dStr][shiftType][reqRole] || 0) < reqQuota &&
                 ((dailyFloorFilled[dStr] && dailyFloorFilled[dStr][floorName] && dailyFloorFilled[dStr][floorName][poolKey]) || 0) < fSafeBase
               ) {
-                const eligible = Object.values(empState).filter(st =>
-                  (st.floor || "") === floorName && canTakeShift(st, wDay, shiftType, reqRole)
-                );
+                const eligible = Object.values(empState).filter(st => {
+                  if ((st.floor || "") !== floorName) return false;
+                  if (!poolRoles.includes(st.designation)) return false;
+                  const roleReq = getRequiredQuota(st.designation, shiftType, wDay);
+                  if ((dailyFilled[dStr][shiftType][st.designation] || 0) >= roleReq) return false;
+                  return canTakeShift(st, wDay, shiftType, st.designation);
+                });
                 if (eligible.length === 0) break;
                 eligible.sort((a, b) => {
                   const famCmp = compareFamilyPriority(a, b, dStr, wDay.dayName);
                   if (famCmp !== 0) return famCmp;
-                  return (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek);
+                  return compareWeekdayCandidates(a, b, wDay);
                 });
-                assignShift(eligible[0], wDay, shiftType, reqRole);
+                assignShift(eligible[0], wDay, shiftType, eligible[0].designation);
               }
             });
           }
@@ -973,12 +1048,12 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
               reqRole,
               safeBaseQuota,
               (st) => canTakeShift(st, wDay, shiftType, reqRole),
-              (a, b) => (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek)
+              (a, b) => compareWeekdayCandidates(a, b, wDay)
             );
           }
         });
 
-        // Sub-Pass 4B: Full Quota Completion (fills days to 100% reqQuota without equalizing shortages)
+        // Sub-Pass 4B: Full Quota Completion (fills days to 100% reqQuota)
         weekdaysOnly.forEach(wDay => {
           const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
           if (reqQuota <= 0) return;
@@ -991,7 +1066,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             reqRole,
             reqQuota,
             (st) => canTakeShift(st, wDay, shiftType, reqRole),
-            (a, b) => (b.workShiftsAllowedThisWeek - b.shiftsThisWeek) - (a.workShiftsAllowedThisWeek - a.shiftsThisWeek)
+            (a, b) => compareWeekdayCandidates(a, b, wDay)
           );
         });
       });
@@ -1013,7 +1088,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             const subRole = substitutes[sIdx];
 
             const candidates = Object.values(empState).filter(st => {
-              return canTakeShift(st, dayInfo, shiftType, subRole);
+              if (!canTakeShift(st, dayInfo, shiftType, subRole)) return false;
+              // Respect Fair Weekend Rule during substitutions
+              if (dayInfo.isWeekend && !st.isWeekendWorkingWeek) return false;
+              return true;
             }).sort((a, b) => {
               const famCmp = compareFamilyPriority(a, b, dStr, dayInfo.dayName);
               if (famCmp !== 0) return famCmp;
@@ -1036,38 +1114,90 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       });
     });
 
-    // PASS 5.5: User Decision - Weekend rule can be skipped to fulfill contract hours
-    if (weekendDays.length > 0) {
-      sortedRoles.forEach(reqRole => {
-        ["D", "N"].forEach(shiftType => {
-          weekendDays.forEach(wDay => {
-            const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
-            if (reqQuota <= 0) return;
+    // PASS 5B: Within-Week Contract Fulfillment (Strictly Enforcing Fair Weekend Rule & Weekly Caps)
+    // When a floor has more contracted staff shifts in a week than its minimum floor quota (e.g., 9 Carers on Top Floor),
+    // allocate each employee's remaining weekly contracted shifts within THIS week on their eligible days (Mon-Fri for off-weekend
+    // staff; balanced across lowest role-count days for weekend cohort staff) so they never get dumped onto off-weekends later.
+    Object.values(empState).forEach(st => {
+      if (st.shiftsThisWeek >= st.workShiftsAllowedThisWeek) return;
+      if (st.totalShiftsWorked >= st.totalMonthlyTargetShifts) return;
 
-            const dStr = wDay.dateString;
-            if ((dailyFilled[dStr][shiftType][reqRole] || 0) >= reqQuota) return;
+      const shiftType = st.staffType;
+      const reqRole = st.designation;
 
-            pickCandidatesIteratively(
-              wDay,
-              shiftType,
-              reqRole,
-              reqQuota,
-              (st) => {
-                if (st.shiftsThisWeek >= st.workShiftsAllowedThisWeek) return false;
-                if (st.totalShiftsWorked >= st.totalMonthlyTargetShifts) return false;
-                return canTakeShift(st, wDay, shiftType, reqRole);
-              },
-              (a, b) => {
-                const needA = a.workShiftsAllowedThisWeek - a.shiftsThisWeek;
-                const needB = b.workShiftsAllowedThisWeek - b.shiftsThisWeek;
-                if (needB !== needA) return needB - needA;
-                return (b.totalMonthlyTargetShifts - b.totalShiftsWorked) - (a.totalMonthlyTargetShifts - a.totalShiftsWorked);
-              }
-            );
-          });
+      while (st.shiftsThisWeek < st.workShiftsAllowedThisWeek && st.totalShiftsWorked < st.totalMonthlyTargetShifts) {
+        // First try days that strictly respect the Fair Weekend Rule (weekdays only if !isWeekendWorkingWeek)
+        let eligibleDays = weekDays.filter(d => {
+          if (d.isWeekend && !st.isWeekendWorkingWeek && isPatternWorkDay(st, d.dateString) !== true) return false;
+          return canTakeShift(st, d, shiftType, reqRole, false);
         });
-      });
-    }
+
+        // Fallback to any legal day in the week only if no weekday is legally available (e.g. mid-week leave/training)
+        if (eligibleDays.length === 0) {
+          eligibleDays = weekDays.filter(d => canTakeShift(st, d, shiftType, reqRole, false));
+        }
+        if (eligibleDays.length === 0) break;
+
+        eligibleDays.sort((dayA, dayB) => {
+          const dStrA = dayA.dateString;
+          const dStrB = dayB.dateString;
+
+          // 1. If st is on their working weekend and already worked one weekend day, pair the other weekend day first
+          if (st.isWeekendWorkingWeek) {
+            const aIsPairedWk = (dayA === satDay && sunDay && st.assignedShifts[sunDay.dateString] && st.assignedShifts[sunDay.dateString].shift !== "OFF") ||
+                                (dayA === sunDay && satDay && st.assignedShifts[satDay.dateString] && st.assignedShifts[satDay.dateString].shift !== "OFF") ? 1 : 0;
+            const bIsPairedWk = (dayB === satDay && sunDay && st.assignedShifts[sunDay.dateString] && st.assignedShifts[sunDay.dateString].shift !== "OFF") ||
+                                (dayB === sunDay && satDay && st.assignedShifts[satDay.dateString] && st.assignedShifts[satDay.dateString].shift !== "OFF") ? 1 : 0;
+            if (bIsPairedWk !== aIsPairedWk) return bIsPairedWk - aIsPairedWk;
+          }
+
+          // 2. Prefer days where whole-home role quota is still below required quota
+          const reqA = getRequiredQuota(reqRole, shiftType, dayA);
+          const reqB = getRequiredQuota(reqRole, shiftType, dayB);
+          const underA = ((dailyFilled[dStrA][shiftType][reqRole] || 0) < reqA) ? 1 : 0;
+          const underB = ((dailyFilled[dStrB][shiftType][reqRole] || 0) < reqB) ? 1 : 0;
+          if (underB !== underA) return underB - underA;
+
+          // 3. Family member working on the same date
+          const famA = hasFamilyWorkingOnDate(st, dStrA) ? 1 : 0;
+          const famB = hasFamilyWorkingOnDate(st, dStrB) ? 1 : 0;
+          if (famB !== famA) return famB - famA;
+
+          // 4. Prefer weekdays over weekends when filling extra floor capacity so weekends aren't over-allocated
+          if (dayA.isWeekend !== dayB.isWeekend) {
+            return dayA.isWeekend ? 1 : -1;
+          }
+
+          // 5. Lowest current floor count for this role pool
+          if (shiftType === "D" && st.floor && VALID_FLOORS.includes(st.floor)) {
+            const poolKey = getFloorPoolKey(st.floor, reqRole);
+            const fCountA = (dailyFloorFilled[dStrA] && dailyFloorFilled[dStrA][st.floor] && dailyFloorFilled[dStrA][st.floor][poolKey]) || 0;
+            const fCountB = (dailyFloorFilled[dStrB] && dailyFloorFilled[dStrB][st.floor] && dailyFloorFilled[dStrB][st.floor][poolKey]) || 0;
+            if (fCountA !== fCountB) return fCountA - fCountB;
+          }
+
+          // 6. Lowest whole-home count for this specific role
+          const roleCountA = dailyFilled[dStrA][shiftType][reqRole] || 0;
+          const roleCountB = dailyFilled[dStrB][shiftType][reqRole] || 0;
+          if (roleCountA !== roleCountB) return roleCountA - roleCountB;
+
+          // 7. Prefer adjacent working day for clean consecutive shift blocks
+          const adjA = hasAdjacentWorkingShift(st, dayA) ? 1 : 0;
+          const adjB = hasAdjacentWorkingShift(st, dayB) ? 1 : 0;
+          if (adjB !== adjA) return adjB - adjA;
+
+          return 0;
+        });
+
+        assignShift(st, eligibleDays[0], shiftType, reqRole);
+      }
+    });
+
+    // Update weekendsWorkedCount for fairness tracking across weeks
+    Object.values(empState).forEach(st => {
+      const workedWk = weekendDays.some(wd => st.assignedShifts[wd.dateString] && (st.assignedShifts[wd.dateString].shift === "D" || st.assignedShifts[wd.dateString].shift === "N"));
+      if (workedWk) st.weekendsWorkedCount++;
+    });
 
     // PASS 6: Mark Unassigned Days as OFF
     weekDays.forEach(dayInfo => {
@@ -1081,9 +1211,34 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
-  // PASS 7A: Monthly Contract Hours Equalization Sweep (Strict Quota / Zero Overstaffing)
-  // User Instruction: 1st preference is meet contract hours without overstaffing.
-  // Weekend rule can be skipped if needed to fulfill rota fairly.
+  // Helper to check if a calendar date falls on an employee's designated working weekend
+  function isDateInEmployeeWeekendCohort(st, dateString) {
+    const wIdx = weeks.findIndex(wk => wk.some(d => d.dateString === dateString));
+    if (wIdx === -1) return false;
+    return (wIdx % 2 === 0 && st.weekendCohort === "A") || (wIdx % 2 === 1 && st.weekendCohort === "B");
+  }
+
+  // Helper to check how many shifts an employee already has in the week containing dateString
+  function getShiftsWorkedInWeekOfDate(st, dateString) {
+    const wIdx = weeks.findIndex(wk => wk.some(d => d.dateString === dateString));
+    if (wIdx === -1) return 0;
+    let cnt = 0;
+    weeks[wIdx].forEach(d => {
+      const a = st.assignedShifts[d.dateString];
+      if (a && (a.shift === "D" || a.shift === "N" || isLeaveStatus(a.status))) cnt++;
+    });
+    return cnt;
+  }
+
+  function getMaxAllowedShiftsInWeekOfDate(st, dateString) {
+    const wIdx = weeks.findIndex(wk => wk.some(d => d.dateString === dateString));
+    if (wIdx === -1) return 4;
+    const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
+    const baseTarget = st.weeklyTargets[wIdx] || 4;
+    return Math.min(isMaintenance ? 5 : 4, Math.max(baseTarget, 4));
+  }
+
+  // PASS 7A: Monthly Contract Hours Equalization Sweep (Strict Quota / Zero Overstaffing + Fair Weekend Protection)
   Object.values(empState).forEach(st => {
     let empLeaveCount = 0;
     calendarDays.forEach(d => {
@@ -1097,8 +1252,12 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     const isMaintenance = Boolean(st.designation && st.designation.toLowerCase().includes("maint"));
     const maxConsecutive = isMaintenance ? 5 : 4;
 
-    // Sort candidate days in Pass 7A so days where family partner is working come first
+    // Sort candidate days in Pass 7A: 1) Non-off-weekend days first, 2) Family partner working, 3) Chronological
     const orderedCalendarDays = calendarDays.map((dayInfo, dayIdx) => ({ dayInfo, dayIdx })).sort((a, b) => {
+      const aOffWkPenalty = (a.dayInfo.isWeekend && !isDateInEmployeeWeekendCohort(st, a.dayInfo.dateString)) ? 1 : 0;
+      const bOffWkPenalty = (b.dayInfo.isWeekend && !isDateInEmployeeWeekendCohort(st, b.dayInfo.dateString)) ? 1 : 0;
+      if (aOffWkPenalty !== bOffWkPenalty) return aOffWkPenalty - bOffWkPenalty;
+
       const aFam = hasFamilyWorkingOnDate(st, a.dayInfo.dateString) ? 1 : 0;
       const bFam = hasFamilyWorkingOnDate(st, b.dayInfo.dateString) ? 1 : 0;
       if (bFam !== aFam) return bFam - aFam;
@@ -1111,6 +1270,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       const shiftType = st.staffType;
       const reqRole = st.designation;
       const reqQuota = getRequiredQuota(reqRole, shiftType, dayInfo);
+
+      // Protect Fair Weekend Rule & Weekly Shift Cap
+      if (dayInfo.isWeekend && !isDateInEmployeeWeekendCohort(st, dStr) && isPatternWorkDay(st, dStr) !== true) return;
+      if (getShiftsWorkedInWeekOfDate(st, dStr) >= getMaxAllowedShiftsInWeekOfDate(st, dStr)) return;
 
       // Check current filled on this day for this role
       const currentFilled = Object.values(empState).filter(s => {
@@ -1134,7 +1297,6 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       }
 
       // Can this staff take this shift?
-      // Do NOT overwrite days that are on leave, leave-protected, or night training rest!
       const existing = st.assignedShifts[dStr];
       if (existing) {
         if (isLeaveStatus(existing.status) || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
@@ -1181,9 +1343,7 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     });
   });
 
-  // PASS 7B: Smart Overstaffing Fallback (User Rule + Option A Contract Hours Guarantee)
-  // If contract hours are not met because all role/floor slots are filled, allot them to fulfill their contract
-  // hours on days where their floor/total staff count is lowest (and where family partner works), while strictly respecting all safety and rest rules.
+  // PASS 7B: Smart Overstaffing Fallback (User Rule + Option A Contract Hours Guarantee + Fair Weekend Protection)
   Object.values(empState).forEach(st => {
     let empLeaveCount = 0;
     calendarDays.forEach(d => {
@@ -1199,10 +1359,18 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     const shiftType = st.staffType;
     const reqRole = st.designation;
 
-    // Collect candidate days that satisfy all safety and rest rules
+    // Collect candidate days that satisfy all safety, rest, weekly cap, and Fair Weekend rules
     const candidateDays = [];
     calendarDays.forEach((dayInfo, dayIdx) => {
       const dStr = dayInfo.dateString;
+      // Never dump fallback shifts onto an employee's off-weekend!
+      if (dayInfo.isWeekend && !isDateInEmployeeWeekendCohort(st, dStr) && isPatternWorkDay(st, dStr) !== true) {
+        return;
+      }
+      if (getShiftsWorkedInWeekOfDate(st, dStr) >= getMaxAllowedShiftsInWeekOfDate(st, dStr)) {
+        return;
+      }
+
       const existing = st.assignedShifts[dStr];
       if (existing) {
         if (isLeaveStatus(existing.status) || existing.leaveProtected || existing.isNightTrainingRest || existing.shift !== "OFF") {
@@ -1235,33 +1403,36 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
         if (nextAsgn && nextAsgn.status === "TR") return;
       }
 
-      // Count staff on duty on this floor and across the building for this shift
+      // Count staff of the SAME role on duty on this floor and across the building (avoids weekend bias from 5-day roles)
       const floorStaffOnDay = st.floor ? Object.values(empState).filter(s => {
         const asgn = s.assignedShifts[dStr];
         return asgn && asgn.shift === shiftType && asgn.status !== "TR" && (s.floor || "") === st.floor && s.designation === reqRole;
       }).length : 0;
 
-      const totalStaffOnDay = Object.values(empState).filter(s => {
+      const roleStaffOnDay = Object.values(empState).filter(s => {
         const asgn = s.assignedShifts[dStr];
-        return asgn && asgn.shift === shiftType && asgn.status !== "TR";
+        return asgn && asgn.shift === shiftType && asgn.status !== "TR" && s.designation === reqRole;
       }).length;
 
       const famWorking = hasFamilyWorkingOnDate(st, dStr) ? 1 : 0;
+      const isWkend = dayInfo.isWeekend ? 1 : 0;
 
-      candidateDays.push({ dayInfo, dayIdx, floorStaffOnDay, totalStaffOnDay, famWorking });
+      candidateDays.push({ dayInfo, dayIdx, floorStaffOnDay, roleStaffOnDay, famWorking, isWkend });
     });
 
-    // Prioritize: 1) Family member working on day, 2) Lowest floor role count, 3) Lowest total staffing
+    // Prioritize: 1) Family member working on day, 2) Weekdays before weekends, 3) Lowest floor role count, 4) Lowest role count
     candidateDays.sort((a, b) => {
       if (b.famWorking !== a.famWorking) return b.famWorking - a.famWorking;
+      if (a.isWkend !== b.isWkend) return a.isWkend - b.isWkend;
       if (a.floorStaffOnDay !== b.floorStaffOnDay) return a.floorStaffOnDay - b.floorStaffOnDay;
-      return a.totalStaffOnDay - b.totalStaffOnDay;
+      return a.roleStaffOnDay - b.roleStaffOnDay;
     });
 
     for (const cand of candidateDays) {
       if (st.totalShiftsWorked >= netTargetShifts) break;
       const dStr = cand.dayInfo.dateString;
       const dayIdx = cand.dayIdx;
+      if (getShiftsWorkedInWeekOfDate(st, dStr) >= getMaxAllowedShiftsInWeekOfDate(st, dStr)) continue;
 
       // Re-verify consecutive streak doesn't exceed limit (including 7-day lookback)
       let consecutive = 1;
