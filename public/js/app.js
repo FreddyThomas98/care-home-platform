@@ -82,6 +82,104 @@ function getStaffRolePriority(st, rolePriorityMap) {
   return getRolePriority(role, rolePriorityMap);
 }
 
+// Compact role shortform helper for narrow calendar / coverage cells
+function getShortRoleName(role) {
+  if (!role) return "";
+  const raw = String(role).trim();
+  const lower = raw.toLowerCase();
+  if (lower === "sn / tl" || lower === "sn/tl") return "SN/TL";
+  if (lower.includes("advanced team leader") || lower.includes("adv. team leader") || lower.includes("adv team leader")) return "ATL";
+  if (lower.includes("team leader")) return "TL";
+  if (lower.includes("staff nurse")) return "SN";
+  if (lower.includes("senior carer")) return "SC";
+  if (lower === "carer") return "CR";
+  if (lower.includes("clinical lead")) return "CL";
+  if (lower.includes("dy. manager") || lower.includes("deputy manager") || lower === "manager") return "DM";
+  if (lower.includes("wellbeing") || lower.includes("activities")) return "WB";
+  if (lower.includes("hostes") || lower.includes("hostess")) return "HS";
+  if (lower.includes("maint")) return "MT";
+  if (lower.includes("physio")) return "PT";
+  // Generic fallback for custom roles: initials up to 4 chars, or first 3 chars if single word
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return words.map(w => w[0].toUpperCase()).join("").slice(0, 4);
+  }
+  return raw.slice(0, 3).toUpperCase();
+}
+
+// Compact training module shortform helper for rota TR pills (Option A: shortform inside purple TR pill)
+function getShortTrainingCode(trainingName) {
+  if (!trainingName || !String(trainingName).trim()) return "TR";
+  const raw = String(trainingName).trim();
+
+  const mapSingleModule = (part) => {
+    const clean = part.trim();
+    if (!clean) return "";
+    const lower = clean.toLowerCase();
+    if (lower === "mandatory training" || lower === "training") return "TR";
+    if (lower.includes("fire")) return "FS";
+    if (lower.includes("manual handling") || lower.includes("moving and handling") || lower.includes("moving & handling")) return "MH";
+    if (lower.includes("first aid")) return "FA";
+    if (lower.includes("basic life support") || lower === "bls" || lower.includes("cpr")) return "BLS";
+    if (lower.includes("medic")) return "MED";
+    if (lower.includes("safeguard")) return "SG";
+    if (lower.includes("infection") || lower === "ipc") return "IPC";
+    if (lower.includes("dementia")) return "DEM";
+    if (lower.includes("food hygiene") || lower.includes("food safety")) return "FH";
+    if (lower.includes("health & safety") || lower.includes("health and safety")) return "H&S";
+    if (lower.includes("mental capacity") || lower.includes("dols") || lower === "mca") return "MCA";
+    if (lower.includes("induction")) return "IND";
+    if (lower.includes("epilepsy")) return "EPI";
+    if (lower.includes("peg")) return "PEG";
+    if (lower.includes("catheter")) return "CAT";
+    if (lower.includes("gdpr") || lower.includes("data protection")) return "GDPR";
+    if (lower.includes("coshh")) return "COSHH";
+
+    // Auto-generate clean shortform for any custom training name
+    const stopWords = new Set(["and", "of", "for", "in", "the", "to", "a", "an", "with", "on", "at", "by", "training", "course", "session", "module"]);
+    const words = clean.replace(/[^a-zA-Z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+    const sigWords = words.filter(w => !stopWords.has(w.toLowerCase()));
+    const targetWords = sigWords.length > 0 ? sigWords : words;
+    if (targetWords.length >= 2) {
+      return targetWords.map(w => w[0].toUpperCase()).join("").slice(0, 4);
+    }
+    if (targetWords.length === 1) {
+      return targetWords[0].slice(0, 3).toUpperCase();
+    }
+    return "TR";
+  };
+
+  // Preserve Health & Safety as a single unit before splitting combined modules on '&', '+', '/', ','
+  const normalized = raw.replace(/health\s*(&|and)\s*safety/ig, "HealthAndSafety");
+  const segments = normalized.split(/\s*(?:&|\+|\/|,|\band\b)\s*/i).filter(Boolean);
+
+  if (segments.length > 1) {
+    const codes = [];
+    segments.forEach(seg => {
+      const restored = seg.replace(/HealthAndSafety/ig, "Health & Safety");
+      const code = mapSingleModule(restored);
+      if (code && !codes.includes(code)) codes.push(code);
+    });
+    if (codes.length > 0) return codes.slice(0, 2).join("/");
+  }
+
+  return mapSingleModule(raw);
+}
+
+// Extract unique active training shortform -> full name entries present in a rota for the legend strip
+function getActiveTrainingLegendItems(rota) {
+  const seen = new Map();
+  (rota || []).forEach(r => {
+    if (r && r.status === "TR" && r.trainingName && String(r.trainingName).trim()) {
+      const code = getShortTrainingCode(r.trainingName);
+      if (code && code !== "TR" && !seen.has(code)) {
+        seen.set(code, String(r.trainingName).trim());
+      }
+    }
+  });
+  return Array.from(seen.entries()).map(([code, name]) => ({ code, name }));
+}
+
 function sortStaffByPriority(staffList, rolePriorityMap) {
   return [...staffList].sort((a, b) => {
     const prioA = getStaffRolePriority(a, rolePriorityMap);
@@ -317,8 +415,57 @@ function getRotaWeeks(data) {
   return weeks;
 }
 
+/* Helper to determine which dates in a week are active required days for a flexible < 7 days/week role */
+function getFlexibleActiveDaysForRole(weekDays, maxDays, countOnDateFn) {
+  if (maxDays >= 7 || !Array.isArray(weekDays) || weekDays.length === 0) {
+    return new Set((weekDays || []).map(day => day.dateString));
+  }
+  const targetDays = weekDays.length >= 7
+    ? maxDays
+    : Math.min(maxDays, Math.max(1, Math.round(maxDays * (weekDays.length / 7))));
+
+  const dayEntries = weekDays.map((day, idx) => ({
+    dateString: day.dateString,
+    isWeekend: day.dayName === "Saturday" || day.dayName === "Sunday" || day.dayOfWeek === 0 || day.dayOfWeek === 6,
+    idx,
+    count: countOnDateFn(day.dateString)
+  }));
+
+  const active = new Set();
+
+  // 1. Prioritize days where staff are actually scheduled (highest coverage first, weekdays before weekends, chronological)
+  const workedDays = dayEntries
+    .filter(e => e.count > 0)
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      if (a.isWeekend !== b.isWeekend) return a.isWeekend ? 1 : -1;
+      return a.idx - b.idx;
+    });
+
+  for (const e of workedDays) {
+    if (active.size >= targetDays) break;
+    active.add(e.dateString);
+  }
+
+  // 2. If fewer than targetDays were worked, assign remaining required days to unworked weekdays first, then weekends
+  if (active.size < targetDays) {
+    const unworkedDays = dayEntries
+      .filter(e => !active.has(e.dateString))
+      .sort((a, b) => {
+        if (a.isWeekend !== b.isWeekend) return a.isWeekend ? 1 : -1;
+        return a.idx - b.idx;
+      });
+    for (const e of unworkedDays) {
+      if (active.size >= targetDays) break;
+      active.add(e.dateString);
+    }
+  }
+
+  return active;
+}
+
 /* Helper to evaluate whole-home role-wise shortages and overstaffing live for any day & shift (Option 1: decoupled from floor slicer) */
-function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = []) {
+function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, balances, filterRoles = [], weekDaysOverride = null) {
   const reqList = (requirements && requirements.length > 0)
     ? requirements
     : [
@@ -340,7 +487,33 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     roleDaysMap[h.required_role] = parseInt(h.days_per_week, 10) || 7;
   });
 
-  const dIdx = (d.dayOfWeek + 6) % 7; // Mon=0, ..., Sun=6
+  // Resolve the calendar week containing day `d` for flexible N days/week evaluation
+  let weekDays = weekDaysOverride;
+  if (!Array.isArray(weekDays) || weekDays.length === 0) {
+    const allWeeks = typeof currentRotaData !== "undefined" && currentRotaData ? getRotaWeeks(currentRotaData) : [];
+    const matchedWeek = allWeeks.find(w => Array.isArray(w.days) && w.days.some(wd => wd.dateString === d.dateString));
+    if (matchedWeek) {
+      weekDays = matchedWeek.days;
+    } else if (d && d.dateString) {
+      const parts = d.dateString.split("-").map(Number);
+      const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+      const mondayOffset = (dt.getUTCDay() + 6) % 7;
+      const mon = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] - mondayOffset));
+      const dNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      weekDays = [];
+      for (let i = 0; i < 7; i++) {
+        const cur = new Date(mon.getTime() + i * 86400000);
+        const y = cur.getUTCFullYear();
+        const m = String(cur.getUTCMonth() + 1).padStart(2, "0");
+        const dayNum = String(cur.getUTCDate()).padStart(2, "0");
+        const dow = cur.getUTCDay();
+        weekDays.push({ dateString: `${y}-${m}-${dayNum}`, dayName: dNames[dow], dayOfWeek: dow });
+      }
+    } else {
+      weekDays = [d];
+    }
+  }
+
   const shortRoles = [];
   const overRoles = [];
 
@@ -359,32 +532,57 @@ function getShiftRoleStats(d, shiftType, rota, requirements, roleHierarchy, bala
     }
   }
 
+  // Pre-index working counts by date + shift + effective role (coveringRole || designation) to avoid double-counting substitutions
+  const weekDateSet = new Set(weekDays.map(wd => wd.dateString));
+  const countsD = {};
+  const countsN = {};
+  (rota || []).forEach(r => {
+    if (!weekDateSet.has(r.date)) return;
+    const effRole = r.coveringRole || r.designation;
+    if (!effRole) return;
+    if (r.shift === "D" && r.status !== "TR") {
+      const k = r.date + "|" + effRole;
+      countsD[k] = (countsD[k] || 0) + 1;
+    } else if (r.shift === "N") {
+      const k = r.date + "|" + effRole;
+      countsN[k] = (countsN[k] || 0) + 1;
+    }
+  });
+
   let todayReqDayTotal = 0;
   let todayReqNightTotal = 0;
 
   evaluatedRoleNames.forEach(roleName => {
     const reqObj = reqList.find(r => r.role_name === roleName);
     const maxDays = roleDaysMap[roleName] !== undefined ? roleDaysMap[roleName] : 7;
-    const isDayActive = dIdx < maxDays;
+    const baseD = reqObj ? (reqObj.day_required || 0) : 0;
+    const baseN = reqObj ? (reqObj.night_required || 0) : 0;
 
-    const reqD = (reqObj && isDayActive) ? (reqObj.day_required || 0) : 0;
-    const reqN = (reqObj && isDayActive) ? (reqObj.night_required || 0) : 0;
+    let reqD = 0;
+    if (baseD > 0) {
+      if (maxDays >= 7) {
+        reqD = baseD;
+      } else {
+        const activeD = getFlexibleActiveDaysForRole(weekDays, maxDays, (dateStr) => countsD[dateStr + "|" + roleName] || 0);
+        reqD = activeD.has(d.dateString) ? baseD : 0;
+      }
+    }
+
+    let reqN = 0;
+    if (baseN > 0) {
+      if (maxDays >= 7) {
+        reqN = baseN;
+      } else {
+        const activeN = getFlexibleActiveDaysForRole(weekDays, maxDays, (dateStr) => countsN[dateStr + "|" + roleName] || 0);
+        reqN = activeN.has(d.dateString) ? baseN : 0;
+      }
+    }
 
     todayReqDayTotal += reqD;
     todayReqNightTotal += reqN;
 
-    const allottedD = (rota || []).filter(r =>
-      r.date === d.dateString &&
-      r.shift === "D" &&
-      r.status !== "TR" &&
-      (r.coveringRole === roleName || r.designation === roleName)
-    ).length;
-
-    const allottedN = (rota || []).filter(r =>
-      r.date === d.dateString &&
-      r.shift === "N" &&
-      (r.coveringRole === roleName || r.designation === roleName)
-    ).length;
+    const allottedD = countsD[d.dateString + "|" + roleName] || 0;
+    const allottedN = countsN[d.dateString + "|" + roleName] || 0;
 
     let rShort = 0;
     let rOver = 0;
@@ -779,6 +977,27 @@ async function renderRotaView() {
             <div class="legend-item"><span style="font-weight:800; color:#0f172a; padding:0 4px;">R</span> Requested Off</div>
           </div>
         </div>
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:6px 12px; margin-top:6px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:11px; color:#475569;">
+          <span style="font-weight:800; color:#334155; text-transform:uppercase; font-size:10px; letter-spacing:0.4px;">Role Key:</span>
+          <span><strong>SN</strong> Staff Nurse</span>
+          <span><strong>ATL</strong> Adv. Team Leader</span>
+          <span><strong>TL</strong> Team Leader</span>
+          <span><strong>SC</strong> Senior Carer</span>
+          <span><strong>CR</strong> Carer</span>
+          <span><strong>DM</strong> Dy. Manager</span>
+          <span><strong>CL</strong> Clinical Lead</span>
+          <span><strong>WB</strong> Wellbeing</span>
+          <span><strong>HS</strong> Hostes</span>
+          <span><strong>MT</strong> Maint.</span>
+          <span><strong>PT</strong> Physio</span>
+          ${(() => {
+            const trLegend = getActiveTrainingLegendItems(rota);
+            if (trLegend.length === 0) return '';
+            return `<span style="border-left:1px solid #cbd5e1; height:12px; margin:0 2px;"></span>
+              <span style="font-weight:800; color:#5b21b6; text-transform:uppercase; font-size:10px; letter-spacing:0.4px;">Training Key:</span>
+              ${trLegend.map(t => `<span><span class="status-pill status-TR" style="padding:1px 5px; font-size:10px;">${esc(t.code)}</span> ${esc(t.name)}</span>`).join('')}`;
+          })()}
+        </div>
       </div>
       `;
 
@@ -920,6 +1139,11 @@ async function renderRotaView() {
               if (status === "R") {
                 return `<td style="text-align:center; font-weight:800; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</td>`;
               }
+              if (status === "TR") {
+                const trCode = getShortTrainingCode(rec && rec.trainingName);
+                const trTitle = (rec && rec.trainingName) ? `Training: ${rec.trainingName}` : "Training";
+                return `<td style="text-align:center;"><span class="status-pill status-TR" title="${esc(trTitle)}">${esc(trCode)}</span></td>`;
+              }
               return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
             }).join('')}
                             <td style="text-align:center; color:#94a3b8; font-weight:bold; cursor:pointer;" title="Staff options">⋮</td>
@@ -958,38 +1182,38 @@ async function renderRotaView() {
 
           if (short > 0 && over > 0) {
             return `
-                          <td style="text-align:center; background:#fef2f2; border:1px solid #fca5a5; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; justify-content:center; align-items:center; gap:3px; margin-bottom:4px; flex-wrap:wrap;">
-                              <span class="badge-short-tag" title="Shortage on this day">Short: -${short}</span>
-                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'D')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:16px; height:16px; font-size:10px; line-height:16px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2);">ℹ</button>
-                              <span class="badge-over-tag" title="Overstaffed on this day">Over: +${over}</span>
+                          <td style="text-align:center; background:#fef2f2; border:1px solid #fca5a5; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; justify-content:center; align-items:center; gap:2px; margin-bottom:3px; flex-wrap:wrap;">
+                              <span class="badge-short-tag" title="${esc(stat.shortSummary)}">Short: -${short}</span>
+                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'D')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:15px; height:15px; font-size:9.5px; line-height:15px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2); flex-shrink:0;">ℹ</button>
+                              <span class="badge-over-tag" title="${esc(stat.overSummary)}">Over: +${over}</span>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; margin-top:1px;">🔴 -${b.shortage} ${esc(b.role)}</div>`).join('')}
-                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; margin-top:1px;">🔵 +${b.overstaffed} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="-${b.shortage} ${esc(b.role)}">🔴 -${b.shortage} ${esc(getShortRoleName(b.role))}</div>`).join('')}
+                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="+${b.overstaffed} ${esc(b.role)}">🔵 +${b.overstaffed} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
           } else if (short > 0) {
             return `
-                          <td style="text-align:center; color:#dc2626; background:#fee2e2; border:1px solid #fca5a5; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; align-items:center; justify-content:center; gap:4px; margin-bottom:4px;">
-                              <span class="badge-short-tag" title="Shortage on this day">Short: -${short}</span>
-                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'D')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:16px; height:16px; font-size:10px; line-height:16px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2);">ℹ</button>
+                          <td style="text-align:center; color:#dc2626; background:#fee2e2; border:1px solid #fca5a5; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; align-items:center; justify-content:center; gap:3px; margin-bottom:3px;">
+                              <span class="badge-short-tag" title="${esc(stat.shortSummary)}">Short: -${short}</span>
+                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'D')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:15px; height:15px; font-size:9.5px; line-height:15px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2); flex-shrink:0;">ℹ</button>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; margin-top:1px;">🔴 -${b.shortage} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="-${b.shortage} ${esc(b.role)}">🔴 -${b.shortage} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
           } else if (over > 0) {
             return `
-                          <td style="text-align:center; color:#3730a3; background:#e0e7ff; border:1px solid #c7d2fe; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; align-items:center; justify-content:center; gap:4px; margin-bottom:4px;">
-                              <span class="badge-over-tag" title="Overstaffed on this day">Over: +${over}</span>
+                          <td style="text-align:center; color:#3730a3; background:#e0e7ff; border:1px solid #c7d2fe; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; align-items:center; justify-content:center; gap:3px; margin-bottom:3px;">
+                              <span class="badge-over-tag" title="${esc(stat.overSummary)}">Over: +${over}</span>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; margin-top:1px;">🔵 +${b.overstaffed} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="+${b.overstaffed} ${esc(b.role)}">🔵 +${b.overstaffed} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
@@ -1065,6 +1289,11 @@ async function renderRotaView() {
             if (status === "R") {
               return `<td style="text-align:center; font-weight:800; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</td>`;
             }
+            if (status === "TR") {
+              const trCode = getShortTrainingCode(rec && rec.trainingName);
+              const trTitle = (rec && rec.trainingName) ? `Training: ${rec.trainingName}` : "Training";
+              return `<td style="text-align:center;"><span class="status-pill status-TR" title="${esc(trTitle)}">${esc(trCode)}</span></td>`;
+            }
             return `<td style="text-align:center;"><span class="status-pill status-${status}">${status}</span></td>`;
           }).join('')}
                         <td style="text-align:center; color:#94a3b8; font-weight:bold; cursor:pointer;" title="Staff options">⋮</td>
@@ -1099,38 +1328,38 @@ async function renderRotaView() {
 
           if (short > 0 && over > 0) {
             return `
-                          <td style="text-align:center; background:#fef2f2; border:1px solid #fca5a5; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; justify-content:center; align-items:center; gap:3px; margin-bottom:4px; flex-wrap:wrap;">
-                              <span class="badge-shortage" title="Shortage on this day">Short: -${short}</span>
-                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'N')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:16px; height:16px; font-size:10px; line-height:16px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2);">ℹ</button>
-                              <span class="badge-overstaffed" title="Overstaffed on this day">Over: +${over}</span>
+                          <td style="text-align:center; background:#fef2f2; border:1px solid #fca5a5; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; justify-content:center; align-items:center; gap:2px; margin-bottom:3px; flex-wrap:wrap;">
+                              <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${short}</span>
+                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'N')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:15px; height:15px; font-size:9.5px; line-height:15px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2); flex-shrink:0;">ℹ</button>
+                              <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${over}</span>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; margin-top:1px;">🔴 -${b.shortage} ${esc(b.role)}</div>`).join('')}
-                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; margin-top:1px;">🔵 +${b.overstaffed} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="-${b.shortage} ${esc(b.role)}">🔴 -${b.shortage} ${esc(getShortRoleName(b.role))}</div>`).join('')}
+                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="+${b.overstaffed} ${esc(b.role)}">🔵 +${b.overstaffed} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
           } else if (short > 0) {
             return `
-                          <td style="text-align:center; color:#dc2626; background:#fee2e2; border:1px solid #fca5a5; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; align-items:center; justify-content:center; gap:4px; margin-bottom:4px;">
-                              <span class="badge-shortage" title="Shortage on this day">Short: -${short}</span>
-                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'N')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:16px; height:16px; font-size:10px; line-height:16px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2);">ℹ</button>
+                          <td style="text-align:center; color:#dc2626; background:#fee2e2; border:1px solid #fca5a5; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; align-items:center; justify-content:center; gap:3px; margin-bottom:3px;">
+                              <span class="badge-shortage" title="${esc(stat.shortSummary)}">Short: -${short}</span>
+                              <button type="button" onclick="openShortageDetail('${d.dateString}', 'N')" title="Click to view reasons for this shortage" style="background:#b91c1c; color:#ffffff; border:none; border-radius:50%; width:15px; height:15px; font-size:9.5px; line-height:15px; cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.2); flex-shrink:0;">ℹ</button>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; margin-top:1px;">🔴 -${b.shortage} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleShorts.map(b => `<div style="color:#b91c1c; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="-${b.shortage} ${esc(b.role)}">🔴 -${b.shortage} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
           } else if (over > 0) {
             return `
-                          <td style="text-align:center; color:#3730a3; background:#e0e7ff; border:1px solid #c7d2fe; padding:6px 3px; vertical-align:top;">
-                            <div style="display:flex; align-items:center; justify-content:center; gap:4px; margin-bottom:4px;">
-                              <span class="badge-overstaffed" title="Overstaffed on this day">Over: +${over}</span>
+                          <td style="text-align:center; color:#3730a3; background:#e0e7ff; border:1px solid #c7d2fe; padding:5px 2px; vertical-align:top; overflow:hidden;">
+                            <div style="display:flex; align-items:center; justify-content:center; gap:3px; margin-bottom:3px;">
+                              <span class="badge-overstaffed" title="${esc(stat.overSummary)}">Over: +${over}</span>
                             </div>
-                            <div style="font-size:10px; line-height:1.25; font-weight:700; text-align:center;">
-                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; margin-top:1px;">🔵 +${b.overstaffed} ${esc(b.role)}</div>`).join('')}
+                            <div style="font-size:10px; line-height:1.3; font-weight:700; text-align:center;">
+                              ${roleOvers.map(b => `<div style="color:#2563eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;" title="+${b.overstaffed} ${esc(b.role)}">🔵 +${b.overstaffed} ${esc(getShortRoleName(b.role))}</div>`).join('')}
                             </div>
                           </td>
                         `;
@@ -1164,14 +1393,15 @@ function setRotaWeek(week) {
 }
 
 function navigateWeek(dir) {
+  const totalWeeks = Math.max(1, getRotaWeeks(currentRotaData).length);
   if (selectedWeek === "all") {
-    selectedWeek = dir === "next" ? "1" : "4";
+    selectedWeek = dir === "next" ? "1" : String(totalWeeks);
   } else {
     let num = parseInt(selectedWeek, 10);
     if (dir === "next") {
-      num = num >= 4 ? 1 : num + 1;
+      num = num >= totalWeeks ? 1 : num + 1;
     } else {
-      num = num <= 1 ? 4 : num - 1;
+      num = num <= 1 ? totalWeeks : num - 1;
     }
     selectedWeek = String(num);
   }
@@ -1394,7 +1624,11 @@ function renderMonthlyMatrixHtml(data) {
         else if (status === "L" || status === "AL" || status === "SL" || status === "ML" || status === "CL") {
           pill = `<span class="status-pill status-${status}" style="padding:2px 4px; font-size:10px;" title="${status} Leave">${status}</span>`;
         }
-        else if (status === "TR") pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="Training">TR</span>`;
+        else if (status === "TR") {
+          const trCode = getShortTrainingCode(rec && rec.trainingName);
+          const trTitle = (rec && rec.trainingName) ? `Training: ${rec.trainingName}` : "Training";
+          pill = `<span class="status-pill status-TR" style="padding:2px 4px; font-size:10px;" title="${esc(trTitle)}">${esc(trCode)}</span>`;
+        }
         else if (status === "R") pill = `<span style="font-weight:800; font-size:11px; color:#0f172a;" title="Requested Off (Specific Date Preference)">R</span>`;
 
         return `
@@ -1929,10 +2163,12 @@ function renderRuleConflictsModal() {
   const totalContractShortagesCount = cShortages.length;
   const totalContractShortageHours = Math.round(cShortages.reduce((sum, c) => sum + (c.shortageHours || 0), 0) * 10) / 10;
 
-  // Build entries for every day and shift
+  // Build entries for every day and shift using dynamic weeks
+  const modalWeeks = getRotaWeeks(currentRotaData);
   const entries = [];
   days.forEach((day, dayIdx) => {
-    const weekNum = Math.floor(dayIdx / 7) + 1;
+    const matchedWk = modalWeeks.find(w => Array.isArray(w.days) && w.days.some(wd => wd.dateString === day.dateString));
+    const weekNum = matchedWk ? matchedWk.num : (Math.floor(dayIdx / 7) + 1);
     const ds = shortagesList.find(s => s.date === day.dateString);
 
     // Day Shift
@@ -2130,20 +2366,13 @@ function renderRuleConflictsModal() {
               <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                 <span style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-right:4px;">Week:</span>
                 <button class="btn ${currentConflictWeek === 'all' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('all')">
-                  All 4 Weeks
+                  All ${modalWeeks.length} Weeks
                 </button>
-                <button class="btn ${currentConflictWeek === '1' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('1')">
-                  Week 1
-                </button>
-                <button class="btn ${currentConflictWeek === '2' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('2')">
-                  Week 2
-                </button>
-                <button class="btn ${currentConflictWeek === '3' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('3')">
-                  Week 3
-                </button>
-                <button class="btn ${currentConflictWeek === '4' ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('4')">
-                  Week 4
-                </button>
+                ${modalWeeks.map(w => `
+                  <button class="btn ${String(currentConflictWeek) === String(w.num) ? 'btn-primary' : 'btn-secondary'}" style="padding:4px 10px; font-size:12px;" onclick="setConflictWeek('${w.num}')">
+                    Week ${w.num}
+                  </button>
+                `).join('')}
               </div>
 
               <!-- Shift & Checkbox Filters -->
@@ -2533,6 +2762,7 @@ function handleShiftDrop(e, targetEmpId, toDate) {
   }
 
   // Move shift
+  const prevCoveringRole = fromRec.coveringRole;
   fromRec.shift = "OFF";
   fromRec.status = "OFF";
   fromRec.coveringRole = "";
@@ -2540,7 +2770,7 @@ function handleShiftDrop(e, targetEmpId, toDate) {
 
   toRec.shift = draggedShiftData.shiftType;
   toRec.status = draggedShiftData.shiftType;
-  toRec.coveringRole = fromRec.coveringRole || fromRec.designation || draggedShiftData.role;
+  toRec.coveringRole = prevCoveringRole || fromRec.designation || draggedShiftData.role;
   toRec.isContractFulfillment = false;
 
   hasUnsavedShortageChanges = true;
@@ -2676,6 +2906,9 @@ function renderShortageManagementView() {
 
   const workingRota = ensureShortageWorkingRota();
   const weeks = getRotaWeeks(currentRotaData);
+  if (currentShortageWeek < 1 || currentShortageWeek > weeks.length) {
+    currentShortageWeek = 1;
+  }
   const week = weeks[currentShortageWeek - 1] || weeks[0];
   const days = week ? week.days : [];
   const calendarDays = currentRotaData.calendarDays || [];
@@ -2812,11 +3045,17 @@ function renderShortageManagementView() {
       <!-- Week Tabs -->
       <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
         <span style="font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; margin-right:2px;">Week:</span>
-        ${[1, 2, 3, 4].map(wNum => `
-          <button class="btn ${currentShortageWeek === wNum ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 10px; font-size:11.5px; font-weight:700;" onclick="setShortageWeek(${wNum})">
+        ${weeks.map(w => {
+          const wNum = w.num;
+          const rangeLabel = (w.days && w.days.length > 0)
+            ? `Week ${wNum} (${formatShortDate(w.days[0].dateString)} - ${formatShortDate(w.days[w.days.length - 1].dateString)})`
+            : `Week ${wNum}`;
+          return `
+          <button class="btn ${currentShortageWeek === wNum ? 'btn-primary' : 'btn-secondary'}" style="padding:3px 10px; font-size:11.5px; font-weight:700;" title="${esc(rangeLabel)}" onclick="setShortageWeek(${wNum})">
             W${wNum}
           </button>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
 
       <!-- Shift Filter -->
@@ -2936,14 +3175,14 @@ function renderShortageManagementView() {
                           <div style="color:#b91c1c; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">
                             <span style="font-size:7px; flex-shrink:0;">🔴</span>
                             <span style="flex-shrink:0;">-${r.shortage}</span>
-                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(getShortRoleName(r.role))}</span>
                           </div>
                         `).join('')}
                         ${stat.overRoles.map(r => `
                           <div style="color:#2563eb; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">
                             <span style="font-size:7px; flex-shrink:0;">🔵</span>
                             <span style="flex-shrink:0;">+${r.overstaffed}</span>
-                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(getShortRoleName(r.role))}</span>
                           </div>
                         `).join('')}
                       </div>
@@ -2956,7 +3195,7 @@ function renderShortageManagementView() {
                           <div style="color:#b91c1c; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="-${r.shortage} ${esc(r.role)}">
                             <span style="font-size:7px; flex-shrink:0;">🔴</span>
                             <span style="flex-shrink:0;">-${r.shortage}</span>
-                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(getShortRoleName(r.role))}</span>
                           </div>
                         `).join('')}
                       </div>
@@ -2969,7 +3208,7 @@ function renderShortageManagementView() {
                           <div style="color:#2563eb; font-weight:700; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="+${r.overstaffed} ${esc(r.role)}">
                             <span style="font-size:7px; flex-shrink:0;">🔵</span>
                             <span style="flex-shrink:0;">+${r.overstaffed}</span>
-                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(r.role)}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${esc(getShortRoleName(r.role))}</span>
                           </div>
                         `).join('')}
                       </div>
@@ -3033,7 +3272,7 @@ function renderShortageManagementView() {
                 }
                 return `
                   <div style="display:flex; align-items:center; justify-content:space-between; padding:2px 4px; background:#ffffff; border:1px solid #cbd5e1; border-radius:4px; font-size:10px; line-height:1.2; box-shadow:0 1px 2px rgba(0,0,0,0.03);" title="${esc(titleText)}">
-                    <span style="font-weight:700; color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:54px;" title="${esc(r.role)}">${esc(r.role)}</span>
+                    <span style="font-weight:700; color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:54px;" title="${esc(r.role)}">${esc(getShortRoleName(r.role))}</span>
                     <span style="display:inline-flex; align-items:center; gap:3px; flex-shrink:0;">
                       <span style="font-weight:700; color:#64748b; font-size:10.5px;" title="Required: ${r.required}">${r.required}</span>
                       <span style="font-weight:800; font-size:10.5px; padding:1px 5px; border-radius:3px; background:${badgeBg}; color:${badgeColor}; border:1px solid ${badgeBorder}; min-width:14px; text-align:center;" title="Allocated: ${r.allocated}">${r.allocated}</span>
@@ -3106,8 +3345,8 @@ function renderShortageManagementView() {
         } else if (isLocked) {
           return `
                           <td style="text-align:center; padding:4px 3px; border-right:1px solid #f1f5f9; vertical-align:middle;">
-                            <span class="status-pill status-${status}" style="font-size:11px;" title="${status === 'TR' ? 'Mandatory Training (Locked)' : 'Approved Leave (Locked)'}">
-                              ${status}
+                            <span class="status-pill status-${status}" style="font-size:11px;" title="${status === 'TR' ? esc((rec && rec.trainingName) ? `Training: ${rec.trainingName} (Locked)` : 'Mandatory Training (Locked)') : 'Approved Leave (Locked)'}">
+                              ${status === 'TR' ? esc(getShortTrainingCode(rec && rec.trainingName)) : status}
                             </span>
                           </td>
                         `;
@@ -3185,6 +3424,14 @@ async function exportRotaToExcel() {
       workbook.creator = "Care Home Rota Management Platform";
       workbook.created = new Date();
 
+      const activeTrainingCodes = new Set(getActiveTrainingLegendItems(rota).map(t => t.code));
+      const formatExcelStatusCell = (rec) => {
+        const s = rec ? rec.status : "OFF";
+        if (s === "OFF" || !s) return "";
+        if (s === "TR") return getShortTrainingCode(rec && rec.trainingName);
+        return s;
+      };
+
       const applyHeaderStyle = (row, bgColor = "FF0B3542", fontColor = "FFFFFFFF") => {
         row.height = 26;
         row.eachCell((cell, colNumber) => {
@@ -3239,7 +3486,7 @@ async function exportRotaToExcel() {
           } else if (val === 'CL') {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2FE' } };
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF0369A1' } };
-          } else if (val === 'TR') {
+          } else if (val === 'TR' || activeTrainingCodes.has(val)) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
             cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FF1E40AF' } };
           } else if (val === 'R') {
@@ -3313,7 +3560,7 @@ async function exportRotaToExcel() {
                 const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
                 const s = rec ? rec.status : "OFF";
                 if (s === "D") dayShiftsWorked++;
-                return s === "OFF" ? "" : s;
+                return formatExcelStatusCell(rec);
               });
 
               const row = wsDay.addRow([
@@ -3399,7 +3646,7 @@ async function exportRotaToExcel() {
               const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
               const s = rec ? rec.status : "OFF";
               if (s === "N") nightShiftsWorked++;
-              return s === "OFF" ? "" : s;
+              return formatExcelStatusCell(rec);
             });
 
             const row = wsNight.addRow([
@@ -3504,7 +3751,7 @@ async function exportRotaToExcel() {
               const s = rec ? rec.status : "OFF";
               if (s === "D") dayCount++;
               if (s === "N") nightCount++;
-              return s === "OFF" ? "" : s;
+              return formatExcelStatusCell(rec);
             });
 
             const row = ws.addRow([
@@ -3665,7 +3912,7 @@ async function exportRotaToExcel() {
             const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
             const s = rec ? rec.status : "OFF";
             if (s === "D") dayShiftsWorked++;
-            row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : s;
+            row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : (s === "TR" ? getShortTrainingCode(rec && rec.trainingName) : s);
           });
           row["Day Shifts Worked"] = dayShiftsWorked;
           dayRows.push(row);
@@ -3695,7 +3942,7 @@ async function exportRotaToExcel() {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
           const s = rec ? rec.status : "OFF";
           if (s === "N") nightShiftsWorked++;
-          row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : s;
+          row[`${d.dayName.substring(0, 3)} (${formatShortDate(d.dateString)})`] = s === "OFF" ? "" : (s === "TR" ? getShortTrainingCode(rec && rec.trainingName) : s);
         });
         row["Night Shifts Worked"] = nightShiftsWorked;
         return row;
@@ -3726,7 +3973,7 @@ async function exportRotaToExcel() {
         calendarDays.forEach(d => {
           const rec = rota.find(r => r.employeeId === st.employeeId && r.date === d.dateString);
           const s = rec ? rec.status : "OFF";
-          row[`${d.dayName.substring(0, 3)} ${formatShortDate(d.dateString)}`] = s === "OFF" ? "" : s;
+          row[`${d.dayName.substring(0, 3)} ${formatShortDate(d.dateString)}`] = s === "OFF" ? "" : (s === "TR" ? getShortTrainingCode(rec && rec.trainingName) : s);
         });
         row["Floor Shifts Worked"] = st.floorShiftsWorked;
         row["Floor Hours Worked"] = `${st.floorHoursWorked}h`;
@@ -3844,6 +4091,9 @@ function preparePrintContainer() {
           if (status === "R") {
             return `<td style="text-align:center; font-weight:800; color:#0f172a;">R</td>`;
           }
+          if (status === "TR") {
+            return `<td style="text-align:center;"><span class="print-badge print-badge-TR">${esc(getShortTrainingCode(rec && rec.trainingName))}</span></td>`;
+          }
           return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
         }).join('')}
                     </tr>
@@ -3908,6 +4158,9 @@ function preparePrintContainer() {
         }
         if (status === "R") {
           return `<td style="text-align:center; font-weight:800; color:#0f172a;">R</td>`;
+        }
+        if (status === "TR") {
+          return `<td style="text-align:center;"><span class="print-badge print-badge-TR">${esc(getShortTrainingCode(rec && rec.trainingName))}</span></td>`;
         }
         return `<td style="text-align:center;"><span class="print-badge print-badge-${status}">${status}</span></td>`;
       }).join('')}
@@ -4912,7 +5165,11 @@ async function renderPreferencesView() {
         prefPill = `<span class="status-pill status-D" style="background:#fdf2f8; color:#be185d; border:1px solid #fbcfe8;">Together 🤝</span>`;
       } else if (p.type === "pattern") {
         typeBadge = `<span style="background:#e0e7ff; color:#3730a3; padding:2px 8px; border-radius:4px; font-weight:700;">🔁 Pattern</span>`;
-        detail = `<strong>${p.pattern_work_days} Days ON / ${p.pattern_off_days} Days OFF</strong> (Anchor: ${p.pattern_start_date || 'N/A'})`;
+        if (Number(p.pattern_off_days) === 0) {
+          detail = `<strong>${p.pattern_work_days} Days Consecutive Block</strong> (Alternating Weekends)`;
+        } else {
+          detail = `<strong>${p.pattern_work_days} Days ON / ${p.pattern_off_days} Days OFF</strong> (Anchor: ${p.pattern_start_date || 'N/A'})`;
+        }
       } else if (p.type === "day") {
         typeBadge = `<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-weight:700;">🔄 Weekly Day</span>`;
         detail = `Every <strong>${p.target_day}</strong>`;
@@ -5084,11 +5341,12 @@ async function openPreferenceModal() {
                 </div>
                 <div>
                   <label style="font-size:12px; font-weight:700;">Rest Days in Block</label>
-                  <input type="number" id="patternOff" class="form-control" value="2" min="1" max="14">
+                  <input type="number" id="patternOff" class="form-control" value="2" min="0" max="14">
                 </div>
               </div>
               <div style="font-size:12px; color:#475569; margin-top:6px; line-height:1.4;">
-                ℹ️ Repeating pattern automatically aligns with the active rota period start date.
+                ℹ️ <strong>Rest Days ≥ 1:</strong> Rolling cycle (e.g. 4 on / 2 off) aligned with the rota period start.<br>
+                ℹ️ <strong>Rest Days = 0:</strong> Consecutive weekly block (e.g. 4 days straight) with <strong>Alternating Weekend</strong> rotation applied.
               </div>
             </div>
 

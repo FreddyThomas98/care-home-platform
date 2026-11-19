@@ -611,8 +611,8 @@ app.post("/api/preferences", authenticateToken, async (req, res) => {
       type || "date",
       target_date || null,
       target_day || null,
-      pattern_work_days ? parseInt(pattern_work_days, 10) : null,
-      pattern_off_days ? parseInt(pattern_off_days, 10) : null,
+      pattern_work_days !== null && pattern_work_days !== undefined && pattern_work_days !== "" ? parseInt(pattern_work_days, 10) : null,
+      pattern_off_days !== null && pattern_off_days !== undefined && pattern_off_days !== "" ? parseInt(pattern_off_days, 10) : null,
       pattern_start_date || null,
       preference || "prefer",
       remarks || ""
@@ -750,6 +750,8 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
 
     // Fetch approved leaves to synchronize specific leave codes (AL, SL, ML, CL)
     const approvedLeaves = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
+    // Fetch training records to synchronize exact training module name onto TR cells
+    const trainingRecords = await db.queryAll("SELECT * FROM training_records");
     // Fetch specific-date unavailable/off preferences to synchronize 'R' indicator
     const dateOffPrefs = await db.queryAll("SELECT * FROM preferences WHERE type = 'date' AND (preference = 'unavailable' OR preference = 'off')");
     const getLeaveCode = (type) => {
@@ -796,6 +798,11 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
       } else if (r.status === "L") {
         r.status = "AL";
         r.shift = "OFF";
+      } else if (r.status === "TR") {
+        const matchTraining = (trainingRecords || []).find(t => String(t.employee_id) === String(r.employeeId) && t.training_date === r.date);
+        if (matchTraining && matchTraining.training_name) {
+          r.trainingName = matchTraining.training_name;
+        }
       } else if (r.shift === "OFF" && (r.status === "OFF" || r.status === "R")) {
         const hasReqDateOff = (dateOffPrefs || []).some(p => String(p.employee_id) === String(r.employeeId) && p.target_date === r.date);
         r.status = hasReqDateOff ? "R" : "OFF";
@@ -866,36 +873,90 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
       roleDaysPerWeek[h.required_role] = parseInt(h.days_per_week, 10) || 7;
     });
 
-    const getReqQuota = (role, sType, dayInfo) => {
+    // Build weeks list for flexible days_per_week evaluation
+    const calDays = rotaData.calendarDays || [];
+    const evalWeeks = (Array.isArray(rotaData.weeks) && rotaData.weeks.length > 0)
+      ? rotaData.weeks.map(w => w.days || [])
+      : (() => {
+        const wks = [];
+        let cur = [];
+        calDays.forEach((d, idx) => {
+          if (idx > 0 && d.dayName === "Monday") { wks.push(cur); cur = []; }
+          cur.push(d);
+        });
+        if (cur.length > 0) wks.push(cur);
+        return wks;
+      })();
+
+    const getFlexibleActiveDays = (weekDays, maxDays, countFn) => {
+      if (maxDays >= 7 || !Array.isArray(weekDays) || weekDays.length === 0) {
+        return new Set((weekDays || []).map(d => d.dateString));
+      }
+      const targetDays = weekDays.length >= 7
+        ? maxDays
+        : Math.min(maxDays, Math.max(1, Math.round(maxDays * (weekDays.length / 7))));
+      const entries = weekDays.map((d, idx) => ({
+        dateString: d.dateString,
+        isWeekend: d.dayName === "Saturday" || d.dayName === "Sunday" || d.dayOfWeek === 0 || d.dayOfWeek === 6,
+        idx,
+        count: countFn(d.dateString)
+      }));
+      const active = new Set();
+      entries.filter(e => e.count > 0).sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        if (a.isWeekend !== b.isWeekend) return a.isWeekend ? 1 : -1;
+        return a.idx - b.idx;
+      }).forEach(e => { if (active.size < targetDays) active.add(e.dateString); });
+      if (active.size < targetDays) {
+        entries.filter(e => !active.has(e.dateString)).sort((a, b) => {
+          if (a.isWeekend !== b.isWeekend) return a.isWeekend ? 1 : -1;
+          return a.idx - b.idx;
+        }).forEach(e => { if (active.size < targetDays) active.add(e.dateString); });
+      }
+      return active;
+    };
+
+    const activeDaysByWeek = evalWeeks.map(wkDays => {
+      const map = { D: {}, N: {} };
+      reqList.forEach(r => {
+        const maxDays = roleDaysPerWeek[r.role_name] !== undefined ? roleDaysPerWeek[r.role_name] : 7;
+        map.D[r.role_name] = (r.day_required || 0) > 0
+          ? getFlexibleActiveDays(wkDays, maxDays, (dStr) => rota.filter(item => item.date === dStr && item.shift === "D" && item.status !== "TR" && (item.coveringRole || item.designation) === r.role_name).length)
+          : new Set();
+        map.N[r.role_name] = (r.night_required || 0) > 0
+          ? getFlexibleActiveDays(wkDays, maxDays, (dStr) => rota.filter(item => item.date === dStr && item.shift === "N" && (item.coveringRole || item.designation) === r.role_name).length)
+          : new Set();
+      });
+      return map;
+    });
+
+    const getReqQuota = (role, sType, dateStr) => {
       const match = reqList.find(r => r.role_name === role);
       if (!match) return 0;
       const base = sType === "D" ? (match.day_required || 0) : (match.night_required || 0);
       if (base <= 0) return 0;
-      const maxDays = roleDaysPerWeek[role] !== undefined ? roleDaysPerWeek[role] : 7;
-      const dIdx = (dayInfo.dayOfWeek + 6) % 7;
-      if (dIdx >= maxDays) return 0;
-      return base;
+      const wIdx = evalWeeks.findIndex(wk => wk.some(d => d.dateString === dateStr));
+      const activeSet = (wIdx !== -1 && activeDaysByWeek[wIdx] && activeDaysByWeek[wIdx][sType])
+        ? activeDaysByWeek[wIdx][sType][role]
+        : null;
+      if (!activeSet) return base;
+      return activeSet.has(dateStr) ? base : 0;
     };
 
     // Recalculate dailyShortages (shortages AND overstaffing)
     (rotaData.dailyShortages || []).forEach(ds => {
-      const dayInfo = (rotaData.calendarDays || []).find(d => d.dateString === ds.date) || { dayOfWeek: 1 };
       const dAllotted = rota.filter(r => r.date === ds.date && r.shift === "D" && r.status !== "TR").length;
       const nAllotted = rota.filter(r => r.date === ds.date && r.shift === "N").length;
 
-      ds.dayAllotted = dAllotted;
-      ds.dayShortage = Math.max(0, ds.dayRequired - dAllotted);
-      ds.dayOverstaffed = Math.max(0, dAllotted - ds.dayRequired);
-
-      ds.nightAllotted = nAllotted;
-      ds.nightShortage = Math.max(0, ds.nightRequired - nAllotted);
-      ds.nightOverstaffed = Math.max(0, nAllotted - ds.nightRequired);
+      let dayReqTotal = 0;
+      let nightReqTotal = 0;
 
       // Rebuild role-by-role breakdowns for both shortages and overstaffing
       const dayBreakdown = [];
       reqList.forEach(r => {
-        const req = getReqQuota(r.role_name, "D", dayInfo);
-        const allotted = rota.filter(item => item.date === ds.date && item.shift === "D" && item.status !== "TR" && (item.coveringRole === r.role_name || item.designation === r.role_name)).length;
+        const req = getReqQuota(r.role_name, "D", ds.date);
+        dayReqTotal += req;
+        const allotted = rota.filter(item => item.date === ds.date && item.shift === "D" && item.status !== "TR" && (item.coveringRole || item.designation) === r.role_name).length;
         const short = Math.max(0, req - allotted);
         const over = Math.max(0, allotted - req);
         if (short > 0 || over > 0) {
@@ -909,12 +970,17 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
           });
         }
       });
+      ds.dayRequired = dayReqTotal;
+      ds.dayAllotted = dAllotted;
+      ds.dayShortage = Math.max(0, dayReqTotal - dAllotted);
+      ds.dayOverstaffed = Math.max(0, dAllotted - dayReqTotal);
       ds.dayBreakdown = dayBreakdown;
 
       const nightBreakdown = [];
       reqList.forEach(r => {
-        const req = getReqQuota(r.role_name, "N", dayInfo);
-        const allotted = rota.filter(item => item.date === ds.date && item.shift === "N" && (item.coveringRole === r.role_name || item.designation === r.role_name)).length;
+        const req = getReqQuota(r.role_name, "N", ds.date);
+        nightReqTotal += req;
+        const allotted = rota.filter(item => item.date === ds.date && item.shift === "N" && (item.coveringRole || item.designation) === r.role_name).length;
         const short = Math.max(0, req - allotted);
         const over = Math.max(0, allotted - req);
         if (short > 0 || over > 0) {
@@ -928,6 +994,10 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
           });
         }
       });
+      ds.nightRequired = nightReqTotal;
+      ds.nightAllotted = nAllotted;
+      ds.nightShortage = Math.max(0, nightReqTotal - nAllotted);
+      ds.nightOverstaffed = Math.max(0, nAllotted - nightReqTotal);
       ds.nightBreakdown = nightBreakdown;
     });
 
