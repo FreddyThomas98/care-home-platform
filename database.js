@@ -9,7 +9,15 @@ if (isPostgres) {
   const { Pool } = require("pg");
   pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }
+    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 20000,
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000
+  });
+  pgPool.on("error", (err) => {
+    console.warn("PostgreSQL idle client error (auto-recovering):", err.message);
   });
 } else {
   let Database;

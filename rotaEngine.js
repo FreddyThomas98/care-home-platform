@@ -16,13 +16,22 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
   const warnings = [];
   const clashes = [];
 
-  // 1. Fetch live data from database (PostgreSQL or SQLite)
-  const employees = await db.queryAll("SELECT * FROM employees WHERE active = 1");
-  const requirementsList = await db.queryAll("SELECT * FROM requirements");
-  const hierarchyList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
-  const leaveList = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
-  const prefList = await db.queryAll("SELECT * FROM preferences");
-  const trainingList = await db.queryAll("SELECT * FROM training_records");
+  // 1. Fetch live data from database in parallel (1 round-trip instead of 6)
+  const [
+    employees,
+    requirementsList,
+    hierarchyList,
+    leaveList,
+    prefList,
+    trainingList
+  ] = await Promise.all([
+    db.queryAll("SELECT * FROM employees WHERE active = 1"),
+    db.queryAll("SELECT * FROM requirements"),
+    db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC"),
+    db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'"),
+    db.queryAll("SELECT * FROM preferences"),
+    db.queryAll("SELECT * FROM training_records")
+  ]);
 
   // Canonical role sorting order
   const roleRankMap = {
@@ -309,9 +318,10 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
 
   const prevShiftsByEmp = {};
   try {
+    const earliestLookbackDate = prevCalendarDays[0].dateString;
     const priorSavedRotas = await db.queryAll(
-      "SELECT start_date, end_date, rota_json FROM saved_rotas WHERE start_date < ? ORDER BY id DESC LIMIT 10",
-      [startDateStr]
+      "SELECT start_date, end_date, rota_json FROM saved_rotas WHERE start_date < ? AND end_date >= ? ORDER BY id DESC LIMIT 2",
+      [startDateStr, earliestLookbackDate]
     );
     const prevDateSet = new Set(prevCalendarDays.map(d => d.dateString));
     for (const row of (priorSavedRotas || [])) {
@@ -521,6 +531,20 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     roleGroups[k].push(st);
   });
 
+  // Non-Top Floor Daily Clinical/Senior Safeguard Helpers (Ground Floor & Lower Ground Floor)
+  // Ensures at least 1 Staff Nurse OR Senior Carer is scheduled every day on non-Top floors where both are required.
+  const NON_TOP_SN_SC_FLOORS = ["Ground Floor", "Lower Ground Floor"];
+  function isFloorRequiringSnOrSc(floorName) {
+    if (!NON_TOP_SN_SC_FLOORS.includes(floorName)) return false;
+    const snReq = requirements["Staff Nurse"];
+    const scReq = requirements["Senior Carer"];
+    const getVal = (req) => {
+      if (!req) return 0;
+      return floorName === "Ground Floor" ? (req.groundFloor || 0) : (req.lowerGroundFloor || 0);
+    };
+    return getVal(snReq) > 0 && getVal(scReq) > 0;
+  }
+
   Object.values(roleGroups).forEach(group => {
     // Sort by floor first so staff on the same floor are adjacent and split 50/50 between Cohort A and Cohort B,
     // while single-person floor roles also alternate A/B across floors.
@@ -533,6 +557,27 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
       st.weekendCohort = idx % 2 === 0 ? "A" : "B";
       syncFractionalWeeklyTargetsForCohort(st);
     });
+  });
+
+  // Stagger Weekend Cohorts across Staff Nurse & Senior Carer on Ground / Lower Ground Floor
+  // so neither Cohort A nor Cohort B weekends are left with 0 Staff Nurse AND 0 Senior Carer.
+  NON_TOP_SN_SC_FLOORS.forEach(floorName => {
+    if (!isFloorRequiringSnOrSc(floorName)) return;
+    const floorSn = Object.values(empState).filter(s => s.staffType === "D" && s.floor === floorName && s.designation === "Staff Nurse");
+    const floorSc = Object.values(empState).filter(s => s.staffType === "D" && s.floor === floorName && s.designation === "Senior Carer");
+    if (floorSn.length === 0 || floorSc.length === 0) return;
+
+    const snA = floorSn.filter(s => s.weekendCohort === "A").length;
+    const snB = floorSn.length - snA;
+    const scA = floorSc.filter(s => s.weekendCohort === "A").length;
+    const scB = floorSc.length - scA;
+
+    if ((snA + scA === 0) || (snB + scB === 0)) {
+      floorSc.forEach(st => {
+        st.weekendCohort = st.weekendCohort === "A" ? "B" : "A";
+        syncFractionalWeeklyTargetsForCohort(st);
+      });
+    }
   });
 
   // Synchronize Weekend Cohort (A or B) for Linked Family Members (Change #2: Family Members Together)
@@ -1204,6 +1249,51 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     const weekdaysOnly = weekDays.filter(d => !d.isWeekend);
     sortedRoles.forEach(reqRole => {
       ["D", "N"].forEach(shiftType => {
+        // Sub-Pass 4A-0: Complementary Senior Carer Pre-Fill on Ground & Lower Ground Floors
+        // Prioritizes weekdays where that floor currently has 0 Staff Nurse so SN & SC don't both pile onto Mon-Thu and leave Friday empty.
+        if (shiftType === "D" && reqRole === "Senior Carer") {
+          NON_TOP_SN_SC_FLOORS.forEach(floorName => {
+            if (!isFloorRequiringSnOrSc(floorName)) return;
+            const daysWithoutSn = weekdaysOnly.filter(wDay => {
+              const dStr = wDay.dateString;
+              const snCount = Object.values(empState).filter(s => {
+                const a = s.assignedShifts[dStr];
+                return a && a.shift === "D" && a.status !== "TR" && (s.floor || "") === floorName &&
+                  (a.coveringRole || s.designation) === "Staff Nurse";
+              }).length;
+              return snCount === 0;
+            });
+
+            daysWithoutSn.forEach(wDay => {
+              const reqQuota = getRequiredQuota("Senior Carer", "D", wDay);
+              if (reqQuota <= 0) return;
+              const dStr = wDay.dateString;
+              const fQuota = getFloorPoolQuota(floorName, "Senior Carer", wDay);
+              if (fQuota <= 0) return;
+              const poolKey = getFloorPoolKey(floorName, "Senior Carer");
+              const curFloorSc = (dailyFloorFilled[dStr] && dailyFloorFilled[dStr][floorName] && dailyFloorFilled[dStr][floorName][poolKey]) || 0;
+              if (curFloorSc >= 1) return;
+              if ((dailyFilled[dStr].D["Senior Carer"] || 0) >= reqQuota) return;
+              if (!hasWeeklyRoleCapacity("Senior Carer", "D")) return;
+
+              const eligible = Object.values(empState).filter(st => {
+                if ((st.floor || "") !== floorName) return false;
+                if (st.designation !== "Senior Carer") return false;
+                if (st.consecutiveBlockDates && !st.consecutiveBlockDates.has(dStr)) return false;
+                return canTakeShift(st, wDay, "D", "Senior Carer");
+              });
+              if (eligible.length > 0) {
+                eligible.sort((a, b) => {
+                  const famCmp = compareFamilyPriority(a, b, dStr, wDay.dayName);
+                  if (famCmp !== 0) return famCmp;
+                  return compareWeekdayCandidates(a, b, wDay);
+                });
+                assignShift(eligible[0], wDay, "D", "Senior Carer");
+              }
+            });
+          });
+        }
+
         // Sub-Pass 4A: Minimum Safe Base across all weekdays (prevents 0-allotted days on Wed/Thu/Fri)
         weekdaysOnly.forEach(wDay => {
           const reqQuota = getRequiredQuota(reqRole, shiftType, wDay);
@@ -1912,6 +2002,63 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
             if (!moved) break;
           }
         });
+      });
+    });
+
+    // Part C: Non-Top Floor Clinical/Senior Daily Safeguard (Ground Floor & Lower Ground Floor)
+    // Guarantees at least 1 Staff Nurse OR Senior Carer every day by legally moving 1 shift from a same-week day
+    // that has BOTH Staff Nurse and Senior Carer (combined >= 2) onto any day that has NEITHER (combined === 0).
+    NON_TOP_SN_SC_FLOORS.forEach(floorName => {
+      if (!isFloorRequiringSnOrSc(floorName)) return;
+
+      const countSnScOnFloor = (dStr) => Object.values(empState).filter(s => {
+        const asgn = s.assignedShifts[dStr];
+        if (!asgn || asgn.shift !== "D" || asgn.status === "TR") return false;
+        if ((s.floor || "") !== floorName) return false;
+        const effRole = asgn.coveringRole || s.designation;
+        return effRole === "Staff Nurse" || effRole === "Senior Carer";
+      }).length;
+
+      weekDays.forEach(zeroDay => {
+        if (countSnScOnFloor(zeroDay.dateString) > 0) return;
+
+        // Donor days in the same week that have BOTH SN + SC (combined >= 2) so donating 1 still leaves >= 1
+        const donorDays = weekDays
+          .filter(d => d.dateString !== zeroDay.dateString && countSnScOnFloor(d.dateString) >= 2)
+          .sort((a, b) => countSnScOnFloor(b.dateString) - countSnScOnFloor(a.dateString));
+
+        let rescued = false;
+        for (const donorDay of donorDays) {
+          // Prefer moving Senior Carer first (keeps Staff Nurse in place), then Staff Nurse if needed
+          const donorCandidates = Object.values(empState)
+            .filter(s =>
+              s.staffType === "D" &&
+              (s.floor || "") === floorName &&
+              (s.designation === "Senior Carer" || s.designation === "Staff Nurse") &&
+              canLegallyMoveShiftWithinWeek(s, donorDay, zeroDay, "D")
+            )
+            .sort((a, b) => {
+              const aIsSc = a.designation === "Senior Carer" ? 0 : 1;
+              const bIsSc = b.designation === "Senior Carer" ? 0 : 1;
+              return aIsSc - bIsSc;
+            });
+
+          if (donorCandidates.length > 0) {
+            executeShiftMoveWithinWeek(donorCandidates[0], donorDay, zeroDay, "D");
+            rescued = true;
+            break;
+          }
+        }
+
+        if (!rescued && countSnScOnFloor(zeroDay.dateString) === 0) {
+          warnings.push({
+            type: "floor_clinical_gap",
+            date: zeroDay.dateString,
+            day: zeroDay.dayName,
+            floor: floorName,
+            message: `${floorName} has neither Staff Nurse nor Senior Carer on ${zeroDay.dayName} (${zeroDay.dateString}) — all floor SN/SC staff are legally unavailable or on leave.`
+          });
+        }
       });
     });
   });

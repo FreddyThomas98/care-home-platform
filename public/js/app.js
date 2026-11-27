@@ -384,6 +384,172 @@ function showConfirmModal({ title = "Confirm Deletion", message = "Are you sure 
   }
 }
 
+/* Optimistic row deletion: hides the row instantly (0ms perceived lag), deletes on server, rolls back only on error */
+function optimisticDeleteRow(rowSelector, apiPath, fallbackRenderFn, emptyColSpan, emptyMessage) {
+  const rowEl = typeof rowSelector === "string" ? document.querySelector(rowSelector) : null;
+  const tbody = rowEl ? rowEl.parentElement : null;
+  if (rowEl) {
+    rowEl.style.display = "none";
+    if (tbody) {
+      const remaining = Array.from(tbody.querySelectorAll("tr")).filter(tr => tr.style.display !== "none" && !tr.dataset.emptyPlaceholder);
+      if (remaining.length === 0 && emptyColSpan && emptyMessage) {
+        const emptyTr = document.createElement("tr");
+        emptyTr.dataset.emptyPlaceholder = "1";
+        emptyTr.innerHTML = `<td colspan="${emptyColSpan}" style="text-align:center; padding:30px; color:#64748b;">${emptyMessage}</td>`;
+        tbody.appendChild(emptyTr);
+      }
+    }
+  }
+  return apiFetch(apiPath, { method: "DELETE" })
+    .then(() => {
+      if (rowEl && rowEl.parentElement) rowEl.remove();
+      if (!rowEl && typeof fallbackRenderFn === "function") fallbackRenderFn();
+    })
+    .catch((err) => {
+      if (rowEl) {
+        rowEl.style.display = "";
+        if (tbody) tbody.querySelectorAll("tr[data-empty-placeholder='1']").forEach(el => el.remove());
+      }
+      alert("Error deleting record: " + err.message);
+    });
+}
+
+/* Instant visual loading state on modal submit buttons while DB writes complete */
+function setFormSavingState(formEvent, isSaving, savingText = "Saving...") {
+  const form = formEvent && formEvent.target;
+  if (!form || !form.querySelector) return;
+  const btn = form.querySelector("button[type='submit']");
+  if (!btn) return;
+  if (isSaving) {
+    btn.dataset.origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = savingText;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.origText) btn.textContent = btn.dataset.origText;
+  }
+}
+
+/* Evaluate live per-employee weekend rotation across all weeks in the active rota */
+function evaluateEmployeeWeekendRotation(empBalance, weeks, rota, roleHierarchy) {
+  const roleDaysMap = {};
+  (roleHierarchy || []).forEach(h => {
+    roleDaysMap[h.required_role] = parseInt(h.days_per_week, 10) || 7;
+  });
+  const maxDays = roleDaysMap[empBalance.designation] !== undefined ? roleDaysMap[empBalance.designation] : 7;
+  const isWeekdayRole = maxDays <= 5;
+  const leaveCodes = new Set(["L", "AL", "SL", "ML", "CL"]);
+
+  const empShiftByDate = {};
+  (rota || []).forEach(r => {
+    if (String(r.employeeId) === String(empBalance.employeeId)) {
+      empShiftByDate[r.date] = r;
+    }
+  });
+
+  const weekendWeeks = [];
+  (weeks || []).forEach(w => {
+    const wDays = w.days || [];
+    const sat = wDays.find(d => d.dayName === "Saturday");
+    const sun = wDays.find(d => d.dayName === "Sunday");
+    if (!sat && !sun) return;
+
+    const satRec = sat ? empShiftByDate[sat.dateString] : null;
+    const sunRec = sun ? empShiftByDate[sun.dateString] : null;
+    const workedSat = Boolean(satRec && (satRec.shift === "D" || satRec.shift === "N") && satRec.status !== "TR");
+    const workedSun = Boolean(sunRec && (sunRec.shift === "D" || sunRec.shift === "N") && sunRec.status !== "TR");
+    const satLeaveOrTr = Boolean(satRec && (leaveCodes.has(satRec.status) || satRec.status === "TR"));
+    const sunLeaveOrTr = Boolean(sunRec && (leaveCodes.has(sunRec.status) || sunRec.status === "TR"));
+
+    let state = "OFF";
+    let detail = `W${w.num}: Weekend OFF`;
+    let pillText = `W${w.num}`;
+
+    if (sat && sun) {
+      if (workedSat && workedSun) {
+        state = "ON";
+        detail = `W${w.num}: Sat & Sun ON`;
+      } else if (workedSat || workedSun) {
+        if ((workedSat && sunLeaveOrTr) || (workedSun && satLeaveOrTr)) {
+          state = "ON";
+          detail = `W${w.num}: ${workedSat ? "Sat ON (Sun Leave/TR)" : "Sun ON (Sat Leave/TR)"}`;
+        } else {
+          state = "SPLIT";
+          pillText = `W${w.num} ${workedSat ? "Sat" : "Sun"}`;
+          detail = `W${w.num}: Split Weekend (${workedSat ? "Saturday only" : "Sunday only"})`;
+        }
+      } else if (satLeaveOrTr || sunLeaveOrTr) {
+        state = "LEAVE";
+        detail = `W${w.num}: Leave / Training`;
+      }
+    } else {
+      // Partial week containing only Sat or only Sun
+      const worked = workedSat || workedSun;
+      state = worked ? "ON" : ((satLeaveOrTr || sunLeaveOrTr) ? "LEAVE" : "OFF");
+      detail = `W${w.num}: ${sat ? "Sat" : "Sun"} ${worked ? "ON" : "OFF"}`;
+    }
+
+    weekendWeeks.push({ num: w.num, state, pillText, detail });
+  });
+
+  const totalWeekends = weekendWeeks.length;
+  const workedCount = weekendWeeks.filter(wk => wk.state === "ON" || wk.state === "SPLIT").length;
+  const backToBackPairs = [];
+  for (let i = 1; i < weekendWeeks.length; i++) {
+    const prevOn = weekendWeeks[i - 1].state === "ON" || weekendWeeks[i - 1].state === "SPLIT";
+    const curOn = weekendWeeks[i].state === "ON" || weekendWeeks[i].state === "SPLIT";
+    if (prevOn && curOn) {
+      backToBackPairs.push(`W${weekendWeeks[i - 1].num}-W${weekendWeeks[i].num}`);
+    }
+  }
+  const splitWeeks = weekendWeeks.filter(wk => wk.state === "SPLIT");
+  const allOffOrLeave = weekendWeeks.every(wk => wk.state === "LEAVE");
+
+  let hasIssue = false;
+  let statusType = "ok";
+  let statusLabel = `✅ Alternating (${workedCount}/${totalWeekends})`;
+
+  if (totalWeekends === 0 || allOffOrLeave) {
+    statusType = "neutral";
+    statusLabel = `— (${workedCount}/${totalWeekends})`;
+  } else if (isWeekdayRole && workedCount === 0) {
+    statusType = "weekday";
+    statusLabel = `Weekday Role (0/${totalWeekends})`;
+  } else if (backToBackPairs.length > 0) {
+    hasIssue = true;
+    statusType = "back_to_back";
+    statusLabel = `🔴 Back-to-Back (${backToBackPairs[0]})`;
+  } else if (splitWeeks.length > 0) {
+    hasIssue = true;
+    statusType = "split";
+    statusLabel = `🟠 Split (${splitWeeks.map(s => s.pillText).join(", ")})`;
+  } else if (!isWeekdayRole && totalWeekends >= 2 && workedCount === 0 && (empBalance.floorShiftsWorked || 0) > 0) {
+    hasIssue = true;
+    statusType = "no_weekends";
+    statusLabel = `🟡 No Weekends (0/${totalWeekends})`;
+  } else if (totalWeekends >= 2 && workedCount > Math.ceil(totalWeekends / 2)) {
+    hasIssue = true;
+    statusType = "over_rotated";
+    statusLabel = `🔴 Over-Rotated (${workedCount}/${totalWeekends})`;
+  }
+
+  return {
+    weekendWeeks,
+    totalWeekends,
+    workedCount,
+    hasIssue,
+    statusType,
+    statusLabel,
+    isWeekdayRole
+  };
+}
+
+function openWeekendRotationIssues() {
+  rotaSubView = "balances";
+  balancesStatusFilter = "weekend_issues";
+  renderRotaView();
+}
+
 /* Helper to safely retrieve or construct weekly chunks from rota calendar days (supports custom date ranges & partial weeks) */
 function getRotaWeeks(data) {
   if (data && Array.isArray(data.weeks) && data.weeks.length > 0) {
@@ -834,6 +1000,7 @@ async function renderRotaView() {
       totalOverstaffingCount += statD.totalOver + statN.totalOver;
     });
     const ruleConflictsCount = (conflictsList || []).length;
+    const weekendRotationIssueCount = (balances || []).filter(b => evaluateEmployeeWeekendRotation(b, weeks, rota, currentRotaData.roleHierarchy).hasIssue).length;
 
     const activeStart = currentRotaData.startDate || (calendarDays[0] && calendarDays[0].dateString) || "2026-09-28";
     const activeEnd = currentRotaData.endDate || (calendarDays[calendarDays.length - 1] && calendarDays[calendarDays.length - 1].dateString) || "2026-10-25";
@@ -930,6 +1097,7 @@ async function renderRotaView() {
             </button>
             <button class="btn-subnav ${rotaSubView === 'balances' ? 'active' : ''}" onclick="setRotaSubView('balances')">
               📊 Contract Hours & Balances
+              ${weekendRotationIssueCount > 0 ? `<span style="background:#dc2626; color:#ffffff; font-size:10px; font-weight:800; padding:1px 6px; border-radius:10px; margin-left:6px;" title="${weekendRotationIssueCount} staff with weekend rotation issues">🔄 ${weekendRotationIssueCount}</span>` : ''}
             </button>
           </div>
 
@@ -1699,23 +1867,36 @@ function renderMonthlyMatrixHtml(data) {
 }
 
 function renderContractBalancesHtml(data) {
-  const { balances } = data;
+  const { balances, rota, roleHierarchy } = data;
+  const weeks = getRotaWeeks(data);
+  const totalWeeksCount = Math.max(1, weeks.length);
   const allRoles = [...new Set(balances.map(b => b.designation))].sort();
 
+  // Compute live weekend rotation audit for every staff member
+  const weekendAuditMap = {};
+  balances.forEach(b => {
+    weekendAuditMap[String(b.employeeId)] = evaluateEmployeeWeekendRotation(b, weeks, rota, roleHierarchy);
+  });
+
   const totalStaff = balances.length;
-  const totalContractBaseHours = balances.reduce((sum, b) => sum + (b.contractHours * 4), 0);
+  const totalContractBaseHours = balances.reduce((sum, b) => sum + (b.baseContractHours || (b.contractHours * totalWeeksCount)), 0);
   const totalLeaveDedHours = balances.reduce((sum, b) => sum + (b.leaveDedHours || 0), 0);
   const totalNetTargetHours = balances.reduce((sum, b) => sum + (b.netTargetHours || 0), 0);
   const totalFloorHoursWorked = balances.reduce((sum, b) => sum + (b.floorHoursWorked || 0), 0);
   const totalBalanceRemaining = balances.reduce((sum, b) => sum + (b.balanceRemaining || 0), 0);
   const fulfilledStaffCount = balances.filter(b => b.balanceRemaining === 0).length;
   const carriedOverStaffCount = balances.filter(b => b.balanceRemaining > 0).length;
-  const fulfillmentRatePct = Math.round((fulfilledStaffCount / totalStaff) * 100);
+  const weekendIssuesCount = balances.filter(b => weekendAuditMap[String(b.employeeId)] && weekendAuditMap[String(b.employeeId)].hasIssue).length;
+  const fulfillmentRatePct = totalStaff > 0 ? Math.round((fulfilledStaffCount / totalStaff) * 100) : 100;
 
   let filteredBalances = balances.filter(b => {
     if (balancesRoleFilter !== "all" && b.designation !== balancesRoleFilter) return false;
     if (balancesStatusFilter === "fulfilled" && b.balanceRemaining > 0) return false;
     if (balancesStatusFilter === "carried_over" && b.balanceRemaining === 0) return false;
+    if (balancesStatusFilter === "weekend_issues") {
+      const wkAudit = weekendAuditMap[String(b.employeeId)];
+      if (!wkAudit || !wkAudit.hasIssue) return false;
+    }
     if (balancesSearchQuery.trim()) {
       const q = balancesSearchQuery.trim().toLowerCase();
       const matchName = (b.employeeName || "").toLowerCase().includes(q);
@@ -1726,30 +1907,30 @@ function renderContractBalancesHtml(data) {
   });
 
   return `
-    <!-- Top KPI Stat Cards (Clean 4-Card Executive Layout) -->
+    <!-- Top KPI Stat Cards -->
     <div class="stat-grid">
       <div class="stat-card">
         <div class="stat-card-title">🏢 Net Target Hours</div>
         <div class="stat-card-val">${totalNetTargetHours.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
-        <div class="stat-card-desc">Base: ${totalContractBaseHours.toLocaleString()}h – Leave: ${totalLeaveDedHours}h</div>
+        <div class="stat-card-desc">Base: ${Math.round(totalContractBaseHours).toLocaleString()}h – Leave: ${totalLeaveDedHours}h</div>
       </div>
 
       <div class="stat-card">
         <div class="stat-card-title">🏥 Floor Hours Worked</div>
         <div class="stat-card-val" style="color:#059669;">${totalFloorHoursWorked.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
-        <div class="stat-card-desc">${Math.round((totalFloorHoursWorked / totalNetTargetHours) * 100)}% of net target fulfilled</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-card-title">🏖️ Leave Deductions</div>
-        <div class="stat-card-val" style="color:#0284c7;">${totalLeaveDedHours.toLocaleString()} <span style="font-size:14px; font-weight:600; color:#64748b;">hrs</span></div>
-        <div class="stat-card-desc">${balances.reduce((s, b) => s + (b.leaveDays || 0), 0)} approved leave days deducted</div>
+        <div class="stat-card-desc">${totalNetTargetHours > 0 ? Math.round((totalFloorHoursWorked / totalNetTargetHours) * 100) : 100}% of net target fulfilled</div>
       </div>
 
       <div class="stat-card">
         <div class="stat-card-title">🎯 Fulfillment Rate</div>
         <div class="stat-card-val" style="color:#0f766e;">${fulfillmentRatePct}%</div>
-        <div class="stat-card-desc">${fulfilledStaffCount} of ${totalStaff} staff 100% fulfilled</div>
+        <div class="stat-card-desc">${fulfilledStaffCount} of ${totalStaff} staff 100% fulfilled (${balances.reduce((s, b) => s + (b.leaveDays || 0), 0)}d leave)</div>
+      </div>
+
+      <div class="stat-card" style="cursor:pointer; border-color:${weekendIssuesCount > 0 ? '#fca5a5' : '#86efac'}; background:${weekendIssuesCount > 0 ? '#fff1f2' : '#f0fdf4'};" onclick="updateBalancesStatusFilter('${weekendIssuesCount > 0 ? 'weekend_issues' : 'all'}')" title="Click to filter staff with weekend rotation issues">
+        <div class="stat-card-title">🔄 Weekend Rotation Audit</div>
+        <div class="stat-card-val" style="color:${weekendIssuesCount > 0 ? '#b91c1c' : '#15803d'};">${weekendIssuesCount} <span style="font-size:13px; font-weight:700; color:${weekendIssuesCount > 0 ? '#b91c1c' : '#15803d'};">${weekendIssuesCount === 1 ? 'Issue' : 'Issues'}</span></div>
+        <div class="stat-card-desc">${weekendIssuesCount > 0 ? 'Click to view staff missing alternating weekends' : 'All eligible staff have fair alternating weekends ✅'}</div>
       </div>
     </div>
 
@@ -1766,9 +1947,10 @@ function renderContractBalancesHtml(data) {
           </div>
 
           <div>
-            <label style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; display:block; margin-bottom:3px;">Fulfillment Status</label>
+            <label style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; display:block; margin-bottom:3px;">Fulfillment / Weekend Status</label>
             <select class="form-control" style="width:auto; padding:6px 10px; font-size:13px;" onchange="updateBalancesStatusFilter(this.value)">
               <option value="all" ${balancesStatusFilter === 'all' ? 'selected' : ''}>All Statuses (${balances.length})</option>
+              <option value="weekend_issues" ${balancesStatusFilter === 'weekend_issues' ? 'selected' : ''}>🔄 Weekend Rotation Issues (${weekendIssuesCount})</option>
               <option value="fulfilled" ${balancesStatusFilter === 'fulfilled' ? 'selected' : ''}>✅ 100% Fulfilled (${fulfilledStaffCount})</option>
               <option value="carried_over" ${balancesStatusFilter === 'carried_over' ? 'selected' : ''}>⚠️ Carried Forward (${carriedOverStaffCount})</option>
             </select>
@@ -1785,63 +1967,78 @@ function renderContractBalancesHtml(data) {
         </div>
       </div>
 
-      <div class="table-responsive" style="overflow-x:hidden;">
-        <table style="width:100%; table-layout:auto; font-size:12.5px;">
+      <div class="table-responsive" style="overflow-x:auto;">
+        <table style="width:100%; table-layout:auto; font-size:12px;">
           <thead>
             <tr>
               <th style="padding:10px 8px;">Staff Member</th>
-              <th style="padding:10px 8px;">Role</th>
-              <th style="text-align:center; padding:10px 6px;">Type</th>
-              <th style="text-align:center; padding:10px 6px;">Weekly Contract</th>
-              <th style="text-align:center; padding:10px 6px;">4-Wk Base</th>
-              <th style="text-align:center; padding:10px 6px;">Leave Deduct</th>
-              <th style="text-align:center; padding:10px 6px;">Net Target</th>
-              <th style="text-align:center; padding:10px 6px;">Floor Worked</th>
-              <th style="text-align:center; padding:10px 6px;">Balance</th>
-              <th style="min-width:85px; padding:10px 8px;">Target Progress</th>
-              <th style="text-align:center; padding:10px 8px;">Status</th>
+              <th style="padding:10px 6px;">Role</th>
+              <th style="text-align:center; padding:10px 5px;">Type</th>
+              <th style="text-align:center; padding:10px 5px;">Contract</th>
+              <th style="text-align:center; padding:10px 5px;">Leave</th>
+              <th style="text-align:center; padding:10px 5px;">Net Target</th>
+              <th style="text-align:center; padding:10px 5px;">Worked</th>
+              <th style="text-align:center; padding:10px 5px;">Balance</th>
+              <th style="text-align:center; padding:10px 6px;">Weekends (W1–W${totalWeeksCount})</th>
+              <th style="text-align:center; padding:10px 6px;">Weekend Rotation</th>
+              <th style="text-align:center; padding:10px 6px;">Contract Status</th>
             </tr>
           </thead>
           <tbody>
             ${filteredBalances.length === 0 ? `
               <tr>
                 <td colspan="11" style="text-align:center; padding:30px; color:#64748b; font-style:italic;">
-                  No staff members match the selected balance filter.
+                  ${balancesStatusFilter === 'weekend_issues' ? '✅ No weekend rotation issues found — all eligible staff have alternating weekends!' : 'No staff members match the selected balance filter.'}
                 </td>
               </tr>
             ` : filteredBalances.map(b => {
-    const base4Wk = b.contractHours * 4;
-    const pct = b.netTargetHours > 0 ? Math.min(100, Math.round((b.floorHoursWorked / b.netTargetHours) * 100)) : 100;
     const isFulfilled = b.balanceRemaining === 0;
+    const wkAudit = weekendAuditMap[String(b.employeeId)] || { weekendWeeks: [], statusLabel: "—", statusType: "neutral", hasIssue: false };
+    const wkBadgeStyle = wkAudit.statusType === "ok"
+      ? "background:#dcfce7; color:#15803d; border:1px solid #86efac;"
+      : wkAudit.statusType === "weekday" || wkAudit.statusType === "neutral"
+        ? "background:#f1f5f9; color:#475569; border:1px solid #cbd5e1;"
+        : wkAudit.statusType === "split"
+          ? "background:#ffedd5; color:#9a3412; border:1px solid #fdba74;"
+          : wkAudit.statusType === "no_weekends"
+            ? "background:#fef9c3; color:#854d0e; border:1px solid #fde047;"
+            : "background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;";
 
     return `
-                <tr>
+                <tr style="${wkAudit.hasIssue ? 'background:#fffbfb;' : ''}">
                   <td><strong>${esc(b.employeeName)}</strong></td>
                   <td>${esc(b.designation)}</td>
                   <td style="text-align:center;">
                     ${b.staffType === 'D' ? '<span style="color:#d97706; font-weight:700;">☀️ Day</span>' : '<span style="color:#4f46e5; font-weight:700;">🌙 Ngt</span>'}
                   </td>
                   <td style="text-align:center; font-weight:600;">${b.contractHours}h/wk</td>
-                  <td style="text-align:center;">${base4Wk}h</td>
                   <td style="text-align:center;">
                     ${b.leaveDays > 0 ? `<span style="color:#2563eb; font-weight:700;">-${b.leaveDedHours}h (${b.leaveDays}d)</span>` : '<span style="color:#94a3b8;">0h</span>'}
                   </td>
                   <td style="text-align:center; font-weight:700; color:#0b3542;">
-                    ${b.netTargetHours}h <span style="font-size:11px; color:#64748b;">(${b.netTargetShifts !== undefined ? b.netTargetShifts : Math.round(b.netTargetHours / (b.shiftHours || 11))} shf)</span>
+                    ${b.netTargetHours}h <span style="font-size:10.5px; color:#64748b;">(${b.netTargetShifts !== undefined ? b.netTargetShifts : Math.round(b.netTargetHours / (b.shiftHours || 11))} shf)</span>
                   </td>
                   <td style="text-align:center; font-weight:700; ${isFulfilled ? 'color:#15803d;' : 'color:#b91c1c;'}">
-                    ${b.floorHoursWorked}h <span style="font-size:11px; color:#64748b;">(${b.floorShiftsWorked} shf)</span>
+                    ${b.floorHoursWorked}h <span style="font-size:10.5px; color:#64748b;">(${b.floorShiftsWorked} shf)</span>
                   </td>
                   <td style="text-align:center; font-weight:800; ${isFulfilled ? 'color:#15803d;' : 'color:#b91c1c;'}">
                     ${isFulfilled ? '0h' : `-${b.balanceRemaining}h`}
                   </td>
-                  <td>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                      <div style="flex:1; background:#e2e8f0; border-radius:4px; height:8px; overflow:hidden;">
-                        <div style="width:${pct}%; background:${pct === 100 ? '#10b981' : '#f59e0b'}; height:100%; border-radius:4px;"></div>
-                      </div>
-                      <span style="font-size:11px; font-weight:700; min-width:32px;">${pct}%</span>
+                  <td style="text-align:center;">
+                    <div style="display:flex; justify-content:center; flex-wrap:wrap; gap:3px;">
+                      ${wkAudit.weekendWeeks.map(wk => {
+                        let bg = "#f1f5f9", fg = "#64748b", bd = "#cbd5e1";
+                        if (wk.state === "ON") { bg = "#dcfce7"; fg = "#15803d"; bd = "#86efac"; }
+                        else if (wk.state === "SPLIT") { bg = "#ffedd5"; fg = "#9a3412"; bd = "#fdba74"; }
+                        else if (wk.state === "LEAVE") { bg = "#fce7f3"; fg = "#9d174d"; bd = "#f9a8d4"; }
+                        return `<span style="display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:800; background:${bg}; color:${fg}; border:1px solid ${bd};" title="${esc(wk.detail)}">${esc(wk.pillText)}</span>`;
+                      }).join('')}
                     </div>
+                  </td>
+                  <td style="text-align:center;">
+                    <span style="display:inline-block; padding:2px 7px; border-radius:5px; font-size:10.5px; font-weight:700; white-space:nowrap; ${wkBadgeStyle}">
+                      ${esc(wkAudit.statusLabel)}
+                    </span>
                   </td>
                   <td style="text-align:center;">
                     ${isFulfilled ? `
@@ -4582,6 +4779,7 @@ async function saveEmployee(e, empId) {
   const staff_type = document.getElementById("empShiftType").value;
   const active = parseInt(document.getElementById("empActive").value, 10);
 
+  setFormSavingState(e, true);
   try {
     if (empId) {
       await apiFetch(`/api/employees/${empId}`, {
@@ -4597,6 +4795,7 @@ async function saveEmployee(e, empId) {
     closeModal();
     renderEmployeesView();
   } catch (err) {
+    setFormSavingState(e, false);
     alert("Error saving: " + err.message);
   }
 }
@@ -4839,7 +5038,7 @@ async function renderHierarchyView() {
             </thead>
             <tbody>
               ${list.map(h => `
-                <tr>
+                <tr data-row-id="hier-${h.id}">
                   <td style="text-align:center; font-weight:800; font-size:14px; color:#0b3542;">${h.priority}</td>
                   <td><strong>${esc(h.required_role)}</strong></td>
                   <td style="text-align:center;">
@@ -4935,6 +5134,7 @@ async function saveHierarchy(e, id = null) {
   const substitute_3 = document.getElementById("hierSub3").value.trim();
   const substitute_4 = document.getElementById("hierSub4").value.trim();
 
+  setFormSavingState(e, true);
   try {
     if (id) {
       await apiFetch(`/api/hierarchy/${id}`, {
@@ -4950,6 +5150,7 @@ async function saveHierarchy(e, id = null) {
     closeModal();
     renderHierarchyView();
   } catch (err) {
+    setFormSavingState(e, false);
     alert("Error: " + err.message);
   }
 }
@@ -4959,12 +5160,7 @@ async function deleteHierarchy(id) {
     title: "Delete Hierarchy Rule",
     message: "Are you sure you want to delete this role hierarchy rule? This will remove this role substitution.",
     onConfirm: async () => {
-      try {
-        await apiFetch(`/api/hierarchy/${id}`, { method: "DELETE" });
-        renderHierarchyView();
-      } catch (err) {
-        alert("Error deleting hierarchy rule: " + err.message);
-      }
+      await optimisticDeleteRow(`tr[data-row-id="hier-${id}"]`, `/api/hierarchy/${id}`, renderHierarchyView, 8, "No role hierarchy rules configured.");
     }
   });
 }
@@ -5007,7 +5203,7 @@ async function renderLeaveView() {
             </thead>
             <tbody>
               ${list.length === 0 ? `<tr><td colspan="7" style="text-align:center; padding:30px; color:#64748b;">No leave records found.</td></tr>` : list.map(l => `
-                <tr>
+                <tr data-row-id="leave-${l.id}">
                   <td><strong>${esc(l.employee_name)}</strong></td>
                   <td>${esc(l.designation)}</td>
                   <td>${esc(l.leave_type)}</td>
@@ -5091,6 +5287,7 @@ async function saveLeave(e) {
   const end_date = document.getElementById("leaveEnd").value;
   const notes = document.getElementById("leaveNotes").value;
 
+  setFormSavingState(e, true, "Booking...");
   try {
     await apiFetch("/api/leave", {
       method: "POST",
@@ -5099,6 +5296,7 @@ async function saveLeave(e) {
     closeModal();
     renderLeaveView();
   } catch (err) {
+    setFormSavingState(e, false);
     alert("Error: " + err.message);
   }
 }
@@ -5108,12 +5306,7 @@ async function deleteLeave(id) {
     title: "Cancel Approved Leave",
     message: "Are you sure you want to cancel and delete this approved leave booking?",
     onConfirm: async () => {
-      try {
-        await apiFetch(`/api/leave/${id}`, { method: "DELETE" });
-        renderLeaveView();
-      } catch (err) {
-        alert("Error deleting leave record: " + err.message);
-      }
+      await optimisticDeleteRow(`tr[data-row-id="leave-${id}"]`, `/api/leave/${id}`, renderLeaveView, 7, "No leave records found.");
     }
   });
 }
@@ -5187,7 +5380,7 @@ async function renderPreferencesView() {
       }
 
       return `
-                  <tr>
+                  <tr data-row-id="pref-${p.id}">
                     <td><strong>${esc(p.employee_name)}</strong></td>
                     <td>${esc(p.designation)}</td>
                     <td>${typeBadge}</td>
@@ -5507,6 +5700,7 @@ async function savePreference(e) {
     target_day = selectedDays.join(", ");
   }
 
+  setFormSavingState(e, true);
   try {
     await apiFetch("/api/preferences", {
       method: "POST",
@@ -5527,6 +5721,7 @@ async function savePreference(e) {
     closeModal();
     renderPreferencesView();
   } catch (err) {
+    setFormSavingState(e, false);
     alert("Error: " + err.message);
   }
 }
@@ -5536,12 +5731,7 @@ async function deletePreference(id) {
     title: "Delete Staff Preference",
     message: "Are you sure you want to delete this staff preference or pattern?",
     onConfirm: async () => {
-      try {
-        await apiFetch(`/api/preferences/${id}`, { method: "DELETE" });
-        renderPreferencesView();
-      } catch (err) {
-        alert("Error deleting preference: " + err.message);
-      }
+      await optimisticDeleteRow(`tr[data-row-id="pref-${id}"]`, `/api/preferences/${id}`, renderPreferencesView, 7, "No preferences or patterns registered.");
     }
   });
 }
@@ -5583,7 +5773,7 @@ async function renderTrainingView() {
             </thead>
             <tbody>
               ${list.length === 0 ? `<tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;">No training sessions recorded.</td></tr>` : list.map(t => `
-                <tr>
+                <tr data-row-id="training-${t.id}">
                   <td><strong>${esc(t.employee_name)}</strong></td>
                   <td>${esc(t.designation)}</td>
                   <td>${esc(t.training_name)}</td>
@@ -5654,6 +5844,7 @@ async function saveTraining(e) {
   const training_date = document.getElementById("trainDate").value;
   const notes = document.getElementById("trainNotes").value;
 
+  setFormSavingState(e, true, "Scheduling...");
   try {
     await apiFetch("/api/training", {
       method: "POST",
@@ -5662,6 +5853,7 @@ async function saveTraining(e) {
     closeModal();
     renderTrainingView();
   } catch (err) {
+    setFormSavingState(e, false);
     alert("Error: " + err.message);
   }
 }
@@ -5671,12 +5863,7 @@ async function deleteTraining(id) {
     title: "Delete Training Record",
     message: "Are you sure you want to delete this mandatory training record?",
     onConfirm: async () => {
-      try {
-        await apiFetch(`/api/training/${id}`, { method: "DELETE" });
-        renderTrainingView();
-      } catch (err) {
-        alert("Error deleting training record: " + err.message);
-      }
+      await optimisticDeleteRow(`tr[data-row-id="training-${id}"]`, `/api/training/${id}`, renderTrainingView, 6, "No training sessions recorded.");
     }
   });
 }

@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const zlib = require("zlib");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("./database");
@@ -11,6 +12,28 @@ const JWT_SECRET = process.env.JWT_SECRET || "carehome_super_secret_jwt_key_2026
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Built-in gzip compression for large JSON API responses (shrinks 1-2MB rota JSON by ~88%)
+app.use((req, res, next) => {
+  const acceptEncoding = req.headers["accept-encoding"] || "";
+  if (!acceptEncoding.includes("gzip")) return next();
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      const jsonStr = JSON.stringify(body);
+      if (jsonStr && jsonStr.length >= 4096) {
+        const compressed = zlib.gzipSync(Buffer.from(jsonStr, "utf8"));
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Content-Encoding", "gzip");
+        res.setHeader("Vary", "Accept-Encoding");
+        return res.send(compressed);
+      }
+    } catch (ignoreErr) {}
+    return origJson(body);
+  };
+  next();
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 // JWT Authentication Middleware
@@ -151,8 +174,10 @@ app.delete("/api/users/:id", authenticateToken, requireAdmin, async (req, res) =
 
 app.get("/api/employees", authenticateToken, async (req, res) => {
   try {
-    const rows = await db.queryAll("SELECT * FROM employees ORDER BY staff_type ASC, designation ASC, name ASC");
-    const famPrefs = await db.queryAll("SELECT employee_id, target_day FROM preferences WHERE type = 'family'");
+    const [rows, famPrefs] = await Promise.all([
+      db.queryAll("SELECT * FROM employees ORDER BY staff_type ASC, designation ASC, name ASC"),
+      db.queryAll("SELECT employee_id, target_day FROM preferences WHERE type = 'family'")
+    ]);
     const empById = {};
     rows.forEach(r => { empById[String(r.id)] = r; });
 
@@ -737,9 +762,25 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
     }
     const rotaData = JSON.parse(saved.rota_json);
 
-    // Always fetch live requirements and role hierarchy from database
-    rotaData.requirements = await db.queryAll("SELECT * FROM requirements ORDER BY id ASC");
-    rotaData.roleHierarchy = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+    // Fetch live requirements, hierarchy, leaves, trainings, date-off prefs, and employees in parallel (1 round-trip instead of 6)
+    const [
+      requirementsRows,
+      roleHierarchyRows,
+      approvedLeaves,
+      trainingRecords,
+      dateOffPrefs,
+      liveEmployees
+    ] = await Promise.all([
+      db.queryAll("SELECT * FROM requirements ORDER BY id ASC"),
+      db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC"),
+      db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'"),
+      db.queryAll("SELECT * FROM training_records"),
+      db.queryAll("SELECT * FROM preferences WHERE type = 'date' AND (preference = 'unavailable' OR preference = 'off')"),
+      db.queryAll("SELECT * FROM employees")
+    ]);
+
+    rotaData.requirements = requirementsRows;
+    rotaData.roleHierarchy = roleHierarchyRows;
 
     // Build rolePriorityMap directly from role_hierarchy
     const rolePriorityMap = {};
@@ -748,12 +789,6 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
     });
     rotaData.rolePriorityMap = rolePriorityMap;
 
-    // Fetch approved leaves to synchronize specific leave codes (AL, SL, ML, CL)
-    const approvedLeaves = await db.queryAll("SELECT * FROM leave_records WHERE status = 'Approved'");
-    // Fetch training records to synchronize exact training module name onto TR cells
-    const trainingRecords = await db.queryAll("SELECT * FROM training_records");
-    // Fetch specific-date unavailable/off preferences to synchronize 'R' indicator
-    const dateOffPrefs = await db.queryAll("SELECT * FROM preferences WHERE type = 'date' AND (preference = 'unavailable' OR preference = 'off')");
     const getLeaveCode = (type) => {
       if (!type) return "AL";
       const lt = type.trim().toLowerCase();
@@ -764,7 +799,6 @@ app.get("/api/rota/latest", authenticateToken, async (req, res) => {
     };
 
     // Synchronize active rota balances and shift assignments with live employee roster
-    const liveEmployees = await db.queryAll("SELECT * FROM employees");
     const empMap = {};
     liveEmployees.forEach(e => {
       empMap[String(e.id)] = e;
@@ -831,14 +865,16 @@ app.post("/api/rota/save-adjustments", authenticateToken, async (req, res) => {
     const rotaData = JSON.parse(saved.rota_json);
     rotaData.rota = rota;
 
-    // Load requirements and role hierarchy to accurately evaluate daily quotas
-    const reqList = await db.queryAll("SELECT * FROM requirements");
-    const hList = await db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC");
+    // Load requirements, role hierarchy, and employees in parallel
+    const [reqList, hList, liveEmployees] = await Promise.all([
+      db.queryAll("SELECT * FROM requirements"),
+      db.queryAll("SELECT * FROM role_hierarchy ORDER BY priority ASC"),
+      db.queryAll("SELECT * FROM employees")
+    ]);
     rotaData.requirements = reqList;
     rotaData.roleHierarchy = hList;
 
     // Synchronize balances and flat rota entries with live employee roster
-    const liveEmployees = await db.queryAll("SELECT * FROM employees");
     const empMap = {};
     liveEmployees.forEach(e => {
       empMap[String(e.id)] = e;
