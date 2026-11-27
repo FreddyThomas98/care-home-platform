@@ -447,12 +447,13 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
 
     const totalMonthlyTargetShifts = weeklyTargets.reduce((a, b) => a + b, 0);
 
-    // Check pattern preference (or inherit from linked family member if employee doesn't have one directly)
-    let empPattern = prefList.find(p => p.employee_id === emp.id && p.type === "pattern");
+    // Check pattern preference — always pick the newest pattern row (id DESC) with type-safe ID matching
+    const sortedPrefsNewestFirst = [...prefList].sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    let empPattern = sortedPrefsNewestFirst.find(p => String(p.employee_id) === String(emp.id) && p.type === "pattern");
     const peers = familyPeersMap[String(emp.id)] || [];
     if (!empPattern && peers.length > 0) {
       for (const peerId of peers) {
-        const peerPat = prefList.find(p => String(p.employee_id) === String(peerId) && p.type === "pattern");
+        const peerPat = sortedPrefsNewestFirst.find(p => String(p.employee_id) === String(peerId) && p.type === "pattern");
         if (peerPat) {
           empPattern = peerPat;
           break;
@@ -597,15 +598,18 @@ async function generateRotaForPeriod(startDateStr, endDateStr, periodLabel) {
     }
   });
 
-  // Helper: Check if employee has a Consecutive-Block Pattern (N working days / 0 rest days -> consecutive block + alternating weekends)
+  // Helper: Check if employee has a Consecutive-Block Pattern (N working days / 0 or null rest days -> consecutive block + alternating weekends)
   function isConsecutiveBlockPattern(state) {
     return Boolean(
       state &&
       state.pattern &&
       Number(state.pattern.pattern_work_days) > 0 &&
-      state.pattern.pattern_off_days !== null &&
-      state.pattern.pattern_off_days !== undefined &&
-      Number(state.pattern.pattern_off_days) === 0
+      (
+        state.pattern.pattern_off_days === null ||
+        state.pattern.pattern_off_days === undefined ||
+        state.pattern.pattern_off_days === "" ||
+        Number(state.pattern.pattern_off_days) === 0
+      )
     );
   }
 

@@ -438,6 +438,7 @@ function evaluateEmployeeWeekendRotation(empBalance, weeks, rota, roleHierarchy)
   });
   const maxDays = roleDaysMap[empBalance.designation] !== undefined ? roleDaysMap[empBalance.designation] : 7;
   const isWeekdayRole = maxDays <= 5;
+  const isSixDayRole = maxDays === 6;
   const leaveCodes = new Set(["L", "AL", "SL", "ML", "CL"]);
 
   const empShiftByDate = {};
@@ -503,6 +504,7 @@ function evaluateEmployeeWeekendRotation(empBalance, weeks, rota, roleHierarchy)
     }
   }
   const splitWeeks = weekendWeeks.filter(wk => wk.state === "SPLIT");
+  const allSplitAreSatOnly = splitWeeks.length > 0 && splitWeeks.every(wk => wk.pillText.endsWith("Sat"));
   const allOffOrLeave = weekendWeeks.every(wk => wk.state === "LEAVE");
 
   let hasIssue = false;
@@ -519,6 +521,9 @@ function evaluateEmployeeWeekendRotation(empBalance, weeks, rota, roleHierarchy)
     hasIssue = true;
     statusType = "back_to_back";
     statusLabel = `🔴 Back-to-Back (${backToBackPairs[0]})`;
+  } else if (isSixDayRole && allSplitAreSatOnly && workedCount <= Math.ceil(totalWeekends / 2)) {
+    statusType = "ok";
+    statusLabel = `✅ Alternating Sat (${workedCount}/${totalWeekends})`;
   } else if (splitWeeks.length > 0) {
     hasIssue = true;
     statusType = "split";
@@ -1965,6 +1970,15 @@ function renderContractBalancesHtml(data) {
         <div style="font-size:13px; color:#64748b; font-weight:600;">
           Showing <strong>${filteredBalances.length}</strong> of ${totalStaff} staff members
         </div>
+      </div>
+
+      <!-- Weekend Color Key -->
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:6px 16px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:11px; color:#475569;">
+        <span style="font-weight:800; color:#334155; text-transform:uppercase; font-size:10px;">Weekend Key:</span>
+        <span><span style="display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:800; background:#dcfce7; color:#15803d; border:1px solid #86efac;">W1</span> Sat + Sun ON</span>
+        <span><span style="display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:800; background:#ffedd5; color:#9a3412; border:1px solid #fdba74;">W1 Sat</span> 1 Weekend Day Only</span>
+        <span><span style="display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:800; background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1;">W2</span> Weekend OFF</span>
+        <span><span style="display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:800; background:#fce7f3; color:#9d174d; border:1px solid #f9a8d4;">W3</span> Leave / Training</span>
       </div>
 
       <div class="table-responsive" style="overflow-x:auto;">
